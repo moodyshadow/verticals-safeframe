@@ -1,6 +1,10 @@
-# Verticals v3
+# Verticals v3 (Custom Fork)
 
 **The open source AI content engine with built-in niche intelligence.**
+
+> **Credits:** This project is based on [rushindrasinha/youtube-shorts-pipeline](https://github.com/rushindrasinha/youtube-shorts-pipeline) (MIT License). Huge thanks to the original author for the niche-intelligence architecture this fork builds on.
+>
+> This fork adds: a hybrid stock-video/stock-photo/AI-generation b-roll pipeline with relevance filtering (rejects AI/stock matches that don't actually depict the subject), a hard no-placeholder-frame policy (production fails loudly instead of ever shipping a video with a flat color gradient instead of real b-roll), a rule against generating AI likenesses of real named people, and a pixel-based QA tool (`check_video_quality.py`) that audits finished videos for gradient/placeholder frames independent of the pipeline's own reporting.
 
 > Topic in. Published Short out. Any niche. ~$0.11 per video.
 >

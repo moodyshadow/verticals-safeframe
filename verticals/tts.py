@@ -49,6 +49,39 @@ async def _edge_tts_generate(text: str, voice: str, output_path: Path):
     await communicate.save(str(output_path))
 
 
+def _trim_pauses(audio_path: Path, max_pause_ms: int = 350) -> None:
+    """Cap any silence gap in the audio to max_pause_ms, in place.
+
+    Edge TTS's natural sentence/comma pauses often run 500-900ms, which
+    reads as noticeably slow/dead air once burned into a fast-cut Short.
+    This shortens gaps without touching speaking rate/pitch.
+    """
+    try:
+        from pydub import AudioSegment
+        from pydub.silence import detect_silence
+    except ImportError:
+        log("pydub not installed — skipping pause trimming")
+        return
+
+    audio = AudioSegment.from_file(audio_path)
+    silent_ranges = detect_silence(
+        audio, min_silence_len=200, silence_thresh=audio.dBFS - 16
+    )
+    if not silent_ranges:
+        return
+
+    trimmed = AudioSegment.empty()
+    cursor = 0
+    for start, end in silent_ranges:
+        trimmed += audio[cursor:start]
+        gap = end - start
+        trimmed += audio[start:start + min(gap, max_pause_ms)]
+        cursor = end
+    trimmed += audio[cursor:]
+
+    trimmed.export(audio_path, format="mp3")
+
+
 def _generate_edge_tts(script: str, out_dir: Path, lang: str, voice_override: str = "") -> Path:
     """Generate voiceover via Edge TTS (free Microsoft voices)."""
     import asyncio
@@ -75,6 +108,7 @@ def _generate_edge_tts(script: str, out_dir: Path, lang: str, voice_override: st
             asyncio.run(_edge_tts_generate(script, voice, out_path))
 
         log(f"Edge TTS voiceover saved: {out_path.name}")
+        _trim_pauses(out_path)
         return out_path
     except Exception as e:
         raise RuntimeError(f"Edge TTS failed: {e}")
@@ -297,6 +331,13 @@ def _generate_60db(
 
 def _generate_say(script: str, out_dir: Path) -> Path:
     """macOS 'say' fallback TTS."""
+    import platform
+    if platform.system() != "Darwin":
+        raise RuntimeError(
+            "No TTS provider succeeded, and the final fallback ('say') only "
+            "exists on macOS. Set an API key for edge/elevenlabs/minimax/60db, "
+            "or check why the primary provider is failing."
+        )
     out_path = out_dir / "voiceover_say.aiff"
     mp3_path = out_dir / "voiceover_say.mp3"
     run_cmd(["say", "-o", str(out_path), script])
@@ -385,8 +426,12 @@ def generate_voiceover(
         voice_override = voice_config.get("voice_id", "")
         try:
             return _generate_edge_tts(script, out_dir, lang, voice_override)
-        except Exception as e:
-            log(f"Edge TTS failed: {e}")
+        except Exception as first_err:
+            log(f"Edge TTS failed (attempt 1/2): {first_err} — retrying once...")
+            try:
+                return _generate_edge_tts(script, out_dir, lang, voice_override)
+            except Exception as e:
+                log(f"Edge TTS failed: {e}")
             # Fall through to next provider
             if get_minimax_key():
                 log("Falling back to MiniMax TTS...")

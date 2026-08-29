@@ -46,6 +46,8 @@ def cmd_draft(args):
         niche=niche,
         platform=platform,
         provider=provider,
+        url=getattr(args, "topic_url", "") or "",
+        summary=getattr(args, "topic_summary", "") or "",
     )
     draft["job_id"] = job_id
 
@@ -77,7 +79,7 @@ def cmd_produce(args):
     import shutil
 
     draft_path = Path(args.draft)
-    draft = json.loads(draft_path.read_text())
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
     job_id = draft["job_id"]
     lang = args.lang
     state = PipelineState(draft)
@@ -100,11 +102,21 @@ def cmd_produce(args):
 
     # B-roll
     if force or not state.is_done("broll"):
-        frames = generate_broll(draft.get("broll_prompts", ["Cinematic landscape"] * 3), work_dir)
-        state.complete_stage("broll", {"frames": [str(f) for f in frames]})
+        from .config import BROLL_COUNT
+        from .niche import get_visual_source_priority
+        default_prompts = [f"Cinematic landscape, variation {i + 1}" for i in range(BROLL_COUNT)]
+        use_stock = get_visual_source_priority(profile) != "ai_only"
+        frames, fallback_count = generate_broll(draft.get("broll_prompts", default_prompts), work_dir, use_stock=use_stock)
+        if fallback_count:
+            log(f"WARNING: {fallback_count}/{len(frames)} b-roll frames used the plain gradient fallback (image generation failed)")
+        state.complete_stage("broll", {"frames": [str(f) for f in frames], "fallback_count": fallback_count})
+        draft["broll_fallback_count"] = fallback_count
+        draft["broll_frame_count"] = len(frames)
     else:
         log("Skipping b-roll (already done)")
         frames = [Path(f) for f in state.get_artifact("broll", "frames", [])]
+        draft["broll_fallback_count"] = state.get_artifact("broll", "fallback_count", 0)
+        draft["broll_frame_count"] = len(frames)
 
     # Voiceover (niche-aware voice selection)
     if force or not state.is_done("voiceover"):
@@ -201,7 +213,7 @@ def cmd_upload(args):
     import json
 
     draft_path = Path(args.draft)
-    draft = json.loads(draft_path.read_text())
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
     lang = args.lang
     state = PipelineState(draft)
     force = getattr(args, "force", False)
@@ -231,6 +243,11 @@ def cmd_upload(args):
     if force or not state.is_done("upload"):
         url = upload_to_youtube(video_path, draft, srt_path, lang, thumb_path)
         state.complete_stage("upload", {"url": url})
+        try:
+            from .tracking import log_video_metadata
+            log_video_metadata(draft, url, lang)
+        except Exception as e:
+            log(f"Performance tracking log failed (non-fatal): {e}")
     else:
         url = state.get_artifact("upload", "url", "")
         log(f"Skipping upload (already done): {url}")
@@ -451,8 +468,18 @@ def main():
             print("  No trending topics found. Use --topic instead.")
             sys.exit(1)
 
+        def _apply_candidate(c):
+            args.news = c.title
+            args.topic_url = c.url
+            args.topic_summary = c.summary
+
         if getattr(args, "auto_pick", False):
-            args.news = engine.auto_pick(candidates)
+            picked_title = engine.auto_pick(candidates)
+            match = next((c for c in candidates if c.title == picked_title), None)
+            if match:
+                _apply_candidate(match)
+            else:
+                args.news = picked_title
             print(f"  Auto-picked: {args.news}")
         else:
             print("\n  Trending topics:\n")
@@ -460,7 +487,7 @@ def main():
                 print(f"  {i:2d}. [{t.source}] {t.title}")
             choice = input("\n  Pick a number (or enter custom topic): ").strip()
             if choice.isdigit() and 1 <= int(choice) <= len(candidates):
-                args.news = candidates[int(choice) - 1].title
+                _apply_candidate(candidates[int(choice) - 1])
             else:
                 args.news = choice
     elif args.cmd in ("draft", "run") and not getattr(args, "news", None):

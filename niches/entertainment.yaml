@@ -23,6 +23,14 @@ script:
     middle: "3 key points."
     closing: "Takeaway and CTA."
 visuals:
+  # Entertainment stories are usually about a specific movie, show, or
+  # celebrity that no free stock site legally has real stills/photos of —
+  # but the script also has plenty of generic beats (a city's landmarks, a
+  # crowd, a TV studio, a stage) that real stock footage covers well. Try
+  # stock first per-frame; per-prompt Pexels search naturally falls through
+  # to AI generation for the specific/copyrighted beats where no real match
+  # exists, and to a real clip/photo for the generic ones.
+  stock_source: "pexels_first"
   style: "cinematic, professional"
   prompt_suffix: "photorealistic, cinematic lighting, high quality"
 voice:

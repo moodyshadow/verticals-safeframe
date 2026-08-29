@@ -74,5 +74,15 @@ class PipelineState:
         return "\n".join(lines)
 
     def save(self, path: Path):
-        """Write the draft (with embedded state) to disk."""
-        path.write_text(json.dumps(self.draft, indent=2, ensure_ascii=False))
+        """Write the draft (with embedded state) to disk.
+
+        Explicit UTF-8 is required here: Windows' default write_text()
+        encoding is the system codepage (cp1252 on this machine), which
+        can't represent characters like em-dashes or curly quotes that
+        LLM-generated titles/scripts commonly contain, corrupting the
+        file mid-write (truncating it to empty) on any such character.
+        """
+        path.write_text(
+            json.dumps(self.draft, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )

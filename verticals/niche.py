@@ -140,6 +140,20 @@ def get_visual_context(profile: dict) -> dict:
     return profile.get("visuals", {})
 
 
+def get_visual_source_priority(profile: dict) -> str:
+    """How this niche should source b-roll: "pexels_first" (default) tries a
+    real, freely-licensed stock photo before falling back to AI generation;
+    "ai_only" skips stock search entirely.
+
+    Niches about specific copyrighted media (a particular game, movie, show,
+    celebrity) should be "ai_only" — no free stock site can legally host
+    actual screenshots/stills of someone else's IP, so searching for one is
+    a wasted API call that only ever returns generic, off-subject filler.
+    """
+    visuals = profile.get("visuals", {})
+    return visuals.get("stock_source", "pexels_first")
+
+
 def get_visual_prompt_suffix(profile: dict) -> str:
     """Get the image prompt suffix from the niche profile."""
     visuals = profile.get("visuals", {})

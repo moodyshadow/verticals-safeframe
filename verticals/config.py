@@ -22,6 +22,12 @@ CONFIG_FILE = SKILL_DIR / "config.json"
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 
+# Number of distinct b-roll images generated per video. Higher = more visual
+# variety per video (each image gets a shorter Ken Burns segment) and less
+# repetition across videos, at the cost of more generation time/API calls.
+# Override with BROLL_COUNT env var.
+BROLL_COUNT = int(os.environ.get("BROLL_COUNT", "8"))
+
 # ─────────────────────────────────────────────────────
 # Voice config — override via env or config.json
 # ─────────────────────────────────────────────────────
@@ -62,8 +68,41 @@ def run_cmd(cmd, check=True, capture=False, **kwargs):
 
 
 def extract_keywords(text: str) -> str:
-    words = [w.strip(".,!?\"'()[]").lower() for w in text.split()]
-    return " ".join([w for w in words if w and w not in STOPWORDS and len(w) > 2][:4])
+    """Pick up to 4 search-worthy words from a headline.
+
+    Headlines are almost always Title Case, so plain capitalization can't
+    tell a proper noun ("GTA") apart from ordinary headline filler ("Every",
+    "Massive") — both start with an uppercase letter. What actually
+    distinguishes the searchable, load-bearing terms of a headline is: they
+    contain a digit (version/model numbers like "GTA 6"), they're a
+    genuine ALL-CAPS acronym, or they're simply longer/more specific words.
+    Picking blindly by reading order (the old behavior) tends to grab
+    generic clickbait words ("Every Cool Detail...") and miss the entities
+    a search engine actually needs, which silently starves the pipeline of
+    real research and forces the script into vague, factless filler.
+    """
+    raw_words = [w.strip(".,!?\"'()[]") for w in text.split()]
+
+    def is_candidate(w: str) -> bool:
+        lw = w.lower()
+        if not lw or lw in STOPWORDS:
+            return False
+        # Let short tokens through if they carry a digit — a bare "6" is
+        # exactly the kind of thing that matters in "GTA 6".
+        if any(c.isdigit() for c in w):
+            return True
+        return len(lw) > 2
+
+    candidates = [w for w in raw_words if is_candidate(w)]
+
+    def priority(w: str) -> tuple:
+        has_digit = any(c.isdigit() for c in w)
+        is_acronym = w.isupper() and len(w) > 1
+        tier = 0 if has_digit else (1 if is_acronym else 2)
+        return (tier, -len(w))  # stable sort: ties keep original order
+
+    ranked = sorted(candidates, key=priority)
+    return " ".join(w.lower() for w in ranked[:4])
 
 
 # ─────────────────────────────────────────────────────
@@ -76,7 +115,7 @@ def _get_key(name: str) -> str:
         return val
     if CONFIG_FILE.exists():
         try:
-            cfg = json.loads(CONFIG_FILE.read_text())
+            cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             val = cfg.get(name)
             if val:
                 return val
@@ -93,6 +132,10 @@ def get_newsapi_key() -> str:
     return _get_key("NEWSAPI_KEY")
 
 
+def get_reddit_credentials() -> tuple[str, str]:
+    return _get_key("REDDIT_CLIENT_ID"), _get_key("REDDIT_CLIENT_SECRET")
+
+
 # ─────────────────────────────────────────────────────
 # Niche → default topic source configuration
 # ─────────────────────────────────────────────────────
@@ -105,6 +148,16 @@ NICHE_TO_SUBREDDITS: dict[str, list[str]] = {
     "food":    ["food", "recipes"],
     "travel":  ["travel", "solotravel"],
     "general": ["worldnews", "todayilearned"],
+}
+
+# RSS defaults to Hacker News for every niche unless overridden here —
+# without this, "gaming"/"science"/etc. all silently get tech news.
+NICHE_TO_RSS_FEEDS: dict[str, list[str]] = {
+    "tech":          ["https://hnrss.org/frontpage", "https://techcrunch.com/feed/"],
+    "gaming":        ["https://kotaku.com/rss"],
+    "science":       ["https://www.sciencedaily.com/rss/all.xml"],
+    "entertainment": ["https://variety.com/feed/"],
+    "travel":        ["https://www.lonelyplanet.com/news/feed", "https://feeds.feedburner.com/TravelAndLeisure"],
 }
 
 # ─────────────────────────────────────────────────────
@@ -143,7 +196,7 @@ def _has_claude_max_credentials() -> bool:
     if not CLAUDE_CREDENTIALS.exists():
         return False
     try:
-        creds = json.loads(CLAUDE_CREDENTIALS.read_text())
+        creds = json.loads(CLAUDE_CREDENTIALS.read_text(encoding="utf-8"))
         return bool(creds.get("claudeAiOauth", {}).get("accessToken"))
     except Exception:
         return False
@@ -228,6 +281,14 @@ def get_gemini_key() -> str:
     return _get_key("GEMINI_API_KEY")
 
 
+def get_pexels_key() -> str:
+    return _get_key("PEXELS_API_KEY")
+
+
+def get_youtube_data_api_key() -> str:
+    return _get_key("YOUTUBE_DATA_API_KEY")
+
+
 def get_youtube_token_path() -> Path:
     token_path = SKILL_DIR / "youtube_token.json"
     if token_path.exists():
@@ -242,7 +303,7 @@ def load_config() -> dict:
     """Load the full config.json, including topic_sources."""
     if CONFIG_FILE.exists():
         try:
-            return json.loads(CONFIG_FILE.read_text())
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}

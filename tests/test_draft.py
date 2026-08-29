@@ -24,7 +24,10 @@ class TestGenerateDraft:
         draft = generate_draft("AI is changing everything in 2026")
 
         assert draft["script"] == "This is a test script about AI."
-        assert len(draft["broll_prompts"]) == 3
+        # Fewer prompts than BROLL_COUNT get cycled (repeated), not padded
+        # with disconnected generic filler, so every frame stays on-topic.
+        from verticals.config import BROLL_COUNT
+        assert len(draft["broll_prompts"]) == BROLL_COUNT
         assert draft["youtube_title"] == "AI Revolution 2026"
         assert draft["news"] == "AI is changing everything in 2026"
         assert draft["research"] == "Some research data about the topic."
@@ -44,7 +47,7 @@ class TestGenerateDraft:
         mock_research.return_value = "research"
         mock_claude.return_value = json.dumps({
             "script": 12345,  # non-string
-            "broll_prompts": "not a list",  # non-list
+            "broll_prompts": [1, 2, 3],  # non-string items, but still a real list
             "youtube_title": "T",
             "youtube_description": "D",
             "youtube_tags": "t",
@@ -55,7 +58,25 @@ class TestGenerateDraft:
         draft = generate_draft("Test")
         assert isinstance(draft["script"], str)
         assert isinstance(draft["broll_prompts"], list)
-        assert len(draft["broll_prompts"]) == 3  # fallback
+        assert all(isinstance(p, str) for p in draft["broll_prompts"])
+
+    @patch("verticals.draft.research_topic")
+    @patch("verticals.draft._call_claude")
+    def test_raises_when_broll_prompts_missing(self, mock_claude, mock_research):
+        """A disconnected generic filler image is worse than retrying the LLM —
+        omitted broll_prompts should raise so the caller retries/skips the topic,
+        never silently fall back to off-topic imagery."""
+        mock_research.return_value = "research"
+        mock_claude.return_value = json.dumps({
+            "script": "A real script about something specific.",
+            "youtube_title": "T", "youtube_description": "D",
+            "youtube_tags": "t", "instagram_caption": "C",
+            "thumbnail_prompt": "P",
+        })
+
+        import pytest
+        with pytest.raises(Exception):
+            generate_draft("Test")
 
     @patch("verticals.draft.research_topic")
     @patch("verticals.draft._call_claude")
@@ -76,14 +97,36 @@ class TestGenerateDraft:
     @patch("verticals.draft.research_topic")
     @patch("verticals.draft._call_claude")
     def test_truncates_broll_prompts(self, mock_claude, mock_research):
+        from verticals.config import BROLL_COUNT
         mock_research.return_value = "research"
+        too_many = [f"p{i}" for i in range(BROLL_COUNT + 5)]
         mock_claude.return_value = json.dumps({
             "script": "s",
-            "broll_prompts": ["p1", "p2", "p3", "p4", "p5"],  # too many
+            "broll_prompts": too_many,
             "youtube_title": "T", "youtube_description": "D",
             "youtube_tags": "t", "instagram_caption": "C",
             "thumbnail_prompt": "P",
         })
 
         draft = generate_draft("Test")
-        assert len(draft["broll_prompts"]) == 3  # truncated to 3
+        assert len(draft["broll_prompts"]) == BROLL_COUNT
+
+    @patch("verticals.draft.research_topic")
+    @patch("verticals.draft._call_claude")
+    def test_cycles_short_broll_prompts(self, mock_claude, mock_research):
+        """Fewer real prompts than BROLL_COUNT get cycled, not padded with
+        disconnected generic filler."""
+        from verticals.config import BROLL_COUNT
+        mock_research.return_value = "research"
+        mock_claude.return_value = json.dumps({
+            "script": "s",
+            "broll_prompts": ["p1", "p2", "p3"],
+            "youtube_title": "T", "youtube_description": "D",
+            "youtube_tags": "t", "instagram_caption": "C",
+            "thumbnail_prompt": "P",
+        })
+
+        draft = generate_draft("Test")
+        assert len(draft["broll_prompts"]) == BROLL_COUNT
+        assert draft["broll_prompts"][0].startswith("p1")
+        assert draft["broll_prompts"][3].startswith("p1")  # cycled back around

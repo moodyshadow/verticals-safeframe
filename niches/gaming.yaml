@@ -50,6 +50,11 @@ script:
     closing: "Strong take. Not neutral. Pick a side. Then CTA."
 
 visuals:
+  # Gaming stories are almost always about a specific, copyrighted game —
+  # no free stock site can legally have real screenshots of it, so stock
+  # search only ever returns generic "gaming vibes" filler that doesn't
+  # actually match the subject. Go straight to AI generation instead.
+  stock_source: "ai_only"
   style: "vibrant, high contrast, game aesthetic inspired, dark backgrounds with colorful accents"
   mood: "energetic, dramatic, slightly chaotic"
   color_palette: ["#0D0D0D", "#1A0033", "#FF4444", "#FFD700", "#00BFFF"]

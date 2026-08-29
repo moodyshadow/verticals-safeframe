@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .broll import animate_frame
+from .broll import animate_frame, prepare_video_clip
 from .config import MEDIA_DIR, run_cmd
 from .log import log
 
@@ -46,18 +46,22 @@ def assemble_video(
     per_frame = duration / len(frames)
     effects = ["zoom_in", "pan_right", "zoom_out"]
 
-    # Animate each frame with Ken Burns effect
+    # Animate each still frame with Ken Burns; real video clips get
+    # cropped/trimmed to the slot duration instead (already have motion).
     animated = []
     for i, frame in enumerate(frames):
         anim = out_dir / f"anim_{i}.mp4"
-        animate_frame(frame, anim, per_frame + 0.1, effects[i % len(effects)])
+        if Path(frame).suffix.lower() == ".mp4":
+            prepare_video_clip(frame, anim, per_frame + 0.1)
+        else:
+            animate_frame(frame, anim, per_frame + 0.1, effects[i % len(effects)])
         animated.append(anim)
 
     # Concat animated segments (escape single quotes for ffmpeg concat demuxer)
     concat_file = out_dir / "concat.txt"
     def _esc(p):
         return str(p).replace("'", "'\\''" )
-    concat_file.write_text("\n".join(f"file '{_esc(p)}'" for p in animated))
+    concat_file.write_text("\n".join(f"file '{_esc(p)}'" for p in animated), encoding="utf-8")
 
     merged_video = out_dir / "merged_video.mp4"
     run_cmd([
@@ -74,8 +78,8 @@ def assemble_video(
     if ass_path and Path(ass_path).exists():
         if _ffmpeg_has_libass():
             # Escape special chars in path for ffmpeg filter
-            escaped_ass = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-            vf_parts.append(f"ass={escaped_ass}")
+            escaped_ass = str(ass_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            vf_parts.append(f"ass='{escaped_ass}'")
         else:
             log(
                 "WARNING: this ffmpeg build has no libass — captions will NOT "

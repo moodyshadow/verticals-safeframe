@@ -12,6 +12,16 @@ youtube_token.json
 drafts/
 media/
 logs/
+reports/
+tmp/
+report.txt
+test_run.log
+*.log
+
+# Background music — downloadable from chosic.com per music/CREDITS.txt,
+# not worth bloating the repo with 100+ MB of binary audio
+music/*.mp3
+!music/CREDITS.txt
 
 # Python
 __pycache__/
@@ -23,6 +33,21 @@ build/
 .venv/
 venv/
 .pytest_cache/
+
+# Personal channel branding — not part of the generic tool
+branding/
+
+# Personal machine-specific tooling — hardcoded local paths (C:\Users\szabo\...,
+# E:\/F:\ drive scans), unrelated stock-footage/business scripts, not part of
+# the generic pipeline this repo showcases
+batch_run.sh
+review_pipeline.py
+security_scan.py
+stock_analyzer.py
+strip_audio.py
+pedalboard_short.py
+run_openclaw_audit.bat
+run_scan.bat
 
 # OS
 .DS_Store

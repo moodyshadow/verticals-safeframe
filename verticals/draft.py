@@ -7,11 +7,12 @@ visual vocabulary for b-roll prompts, and thumbnail guidance.
 
 import json
 
-from .config import PLATFORM_CONFIGS
+from .config import BROLL_COUNT, PLATFORM_CONFIGS
 from .llm import call_llm
 from .log import log
 from .niche import load_niche, get_script_context, get_visual_context, get_visual_prompt_suffix
 from .research import research_topic
+from .retry import with_retry
 
 
 def _call_claude(prompt: str) -> str:
@@ -19,12 +20,15 @@ def _call_claude(prompt: str) -> str:
     return call_llm(prompt, provider="claude")
 
 
+@with_retry(max_retries=3, base_delay=2.0)
 def generate_draft(
     news: str,
     channel_context: str = "",
     niche: str = "general",
     platform: str = "shorts",
     provider: str | None = None,
+    url: str = "",
+    summary: str = "",
 ) -> dict:
     """Research topic + generate niche-aware draft via LLM.
 
@@ -34,6 +38,10 @@ def generate_draft(
         niche: Niche profile name (loads from niches/<n>.yaml).
         platform: Target platform (shorts, reels, tiktok).
         provider: LLM provider (claude, gemini, openai, ollama).
+        url: Source article URL, if known (from RSS/news topic discovery) —
+            fetched directly for real grounding instead of a keyword search.
+        summary: Source feed's own summary/snippet, used if the article
+            fetch fails.
     """
     # Load niche intelligence
     profile = load_niche(niche)
@@ -41,7 +49,7 @@ def generate_draft(
     visual_context = get_visual_context(profile)
 
     # Research
-    research = research_topic(news)
+    research = research_topic(news, url=url, summary=summary)
 
     # Platform config
     platform_key = platform if platform != "all" else "shorts"
@@ -82,6 +90,9 @@ def generate_draft(
             thumb_guidance = "\nTHUMBNAIL GUIDANCE:\n" + "\n".join(tg_parts)
 
     channel_note = f"\nChannel context: {channel_context}" if channel_context else ""
+    broll_prompt_placeholders = ", ".join(
+        f'"prompt for frame {i + 1}"' for i in range(BROLL_COUNT)
+    )
 
     prompt = f"""You are writing a {platform_label} script ({max_words} words max, ~60-90 seconds spoken).{channel_note}
 
@@ -103,11 +114,31 @@ RULES:
 - Use one of the CTA OPTIONS at the end
 - Never use any of the NEVER USE phrases
 - B-roll prompts must follow the visual guidance (style, mood, preferred subjects)
+- Output exactly {BROLL_COUNT} broll_prompts, one per distinct visual beat of the script
+- Each broll_prompt must depict a DIFFERENT subject, angle, or moment — no two prompts
+  should describe the same scene reworded; vary composition (wide shot, close-up,
+  action, detail) so the finished video doesn't repeat the same image for too long
+- NEVER write a broll_prompt asking to depict a real, named person's face, body, or
+  likeness (e.g. "a photo of [Name]", "[Name] looking embarrassed") — an AI image
+  generator has no control over how it renders a real person and can produce
+  something inaccurate, undignified, or outright inappropriate, which is especially
+  unacceptable when the topic involves someone's death, a tribute, or a sensitive
+  moment. Instead, describe the SETTING, OBJECTS, or SYMBOLIC representation of that
+  beat: the venue/stage, a relevant object (e.g. a guitar and cowboy hat for a country
+  music tribute), a crowd's reaction, a related landmark, an abstract/graphic
+  treatment, or a wide shot where a person is present but not the identifiable focus
+- Each broll_prompt must be STRICTLY LITERAL, describing a concrete, physically
+  photographable thing or scene — never an emotion, vibe, or abstract concept. A
+  real stock video/photo search can only match concrete nouns. Bad: "a feeling of
+  economic anxiety" (nothing photographable). Good: "a stock market chart showing
+  a sharp red decline". Bad: "the excitement of a new discovery". Good: "a
+  scientist looking through a microscope in a lab". If the script mentions a
+  specific object, place, or action, name that literal thing directly in the prompt
 
 Output JSON exactly:
 {{
   "script": "...",
-  "broll_prompts": ["prompt for frame 1", "prompt for frame 2", "prompt for frame 3"],
+  "broll_prompts": [{broll_prompt_placeholders}],
   "youtube_title": "...",
   "youtube_description": "...",
   "youtube_tags": "tag1,tag2,tag3",
@@ -145,11 +176,26 @@ Output JSON exactly:
     for field in expected_str_fields:
         if field in draft and not isinstance(draft[field], str):
             draft[field] = str(draft[field])
-    if "broll_prompts" in draft:
-        if not isinstance(draft["broll_prompts"], list):
-            draft["broll_prompts"] = ["Cinematic landscape"] * 3
-        else:
-            draft["broll_prompts"] = [str(p) for p in draft["broll_prompts"][:3]]
+
+    script_text = draft.get("script", "")
+    if not script_text.strip() or not script_text.strip().strip("."):
+        raise ValueError(
+            f"LLM returned a placeholder/empty script (got {script_text!r}) "
+            f"instead of real content for topic {news!r}"
+        )
+    raw_broll = draft.get("broll_prompts")
+    if not isinstance(raw_broll, list) or not raw_broll:
+        raise ValueError(
+            f"LLM omitted broll_prompts entirely (got {raw_broll!r}) for topic "
+            f"{news!r} — every b-roll frame must be tied to the actual script, "
+            "not a disconnected generic filler image"
+        )
+    prompts = [str(p) for p in raw_broll]
+    if len(prompts) < BROLL_COUNT:
+        # Cycle the real, script-relevant prompts we do have rather than
+        # padding out with generic filler — every frame stays on-topic.
+        prompts = [prompts[i % len(prompts)] for i in range(BROLL_COUNT)]
+    draft["broll_prompts"] = prompts[:BROLL_COUNT]
 
     # Append visual prompt suffix to b-roll prompts
     suffix = get_visual_prompt_suffix(profile)

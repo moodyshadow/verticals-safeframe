@@ -2,7 +2,7 @@
 
 import concurrent.futures
 
-from ..config import load_config, get_anthropic_client, get_claude_backend, call_claude_cli, NICHE_TO_SUBREDDITS
+from ..config import load_config, get_anthropic_client, get_claude_backend, call_claude_cli, NICHE_TO_SUBREDDITS, NICHE_TO_RSS_FEEDS
 from ..log import log
 from .base import TopicCandidate
 
@@ -63,6 +63,10 @@ class TopicEngine:
                     niche_subs = NICHE_TO_SUBREDDITS.get(self._niche, [])
                     if niche_subs:
                         src_cfg["subreddits"] = niche_subs
+                if name == "rss" and "feeds" not in src_cfg:
+                    niche_feeds = NICHE_TO_RSS_FEEDS.get(self._niche, [])
+                    if niche_feeds:
+                        src_cfg["feeds"] = niche_feeds
                 if name == "newsapi":
                     src_cfg.setdefault("niche", self._niche)
 
