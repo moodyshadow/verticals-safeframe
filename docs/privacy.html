@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overclocked Privacy Policy</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --bg: #0F1117; --surface: #171A22; --line: rgba(255,255,255,0.08);
+    --text: #F2F3F5; --text-dim: #9BA1AF; --orange: #FFB020;
+    --font-display: "Rajdhani", "Segoe UI", sans-serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "Consolas", monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #F5F4F1; --surface: #FFFFFF; --line: rgba(20,20,25,0.10);
+      --text: #191B20; --text-dim: #5B5F68; --orange: #D97F0A;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F4F1; --surface: #FFFFFF; --line: rgba(20,20,25,0.10);
+    --text: #191B20; --text-dim: #5B5F68; --orange: #D97F0A;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1117; --surface: #171A22; --line: rgba(255,255,255,0.08);
+    --text: #F2F3F5; --text-dim: #9BA1AF; --orange: #FFB020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font-body); line-height: 1.65;
+  }
+  .page { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
+  .eyebrow {
+    font-family: var(--font-display); font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; font-size: 12px; color: var(--orange); margin-bottom: 10px;
+  }
+  h1 {
+    font-family: var(--font-display); font-weight: 700; font-size: 34px;
+    margin: 0 0 6px; letter-spacing: -0.01em;
+  }
+  .updated { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-dim); margin-bottom: 40px; }
+  h2 {
+    font-family: var(--font-display); font-weight: 600; font-size: 20px;
+    margin: 36px 0 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px;
+  }
+  p, li { font-size: 15.5px; color: var(--text-dim); max-width: 68ch; }
+  strong { color: var(--text); }
+  a { color: var(--orange); }
+  ul { padding-left: 22px; }
+  .contact {
+    margin-top: 48px; padding: 18px 20px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 10px; font-size: 14.5px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="eyebrow">Daily Overclocked</div>
+  <h1>Privacy Policy</h1>
+  <div class="updated">Last updated: August 31, 2026</div>
+
+  <p>This policy covers the data handled by the Daily Overclocked automation tooling that publishes video content to TikTok and other platforms.</p>
+
+  <h2>What data is accessed</h2>
+  <p>The integration accesses only what TikTok's Content Posting API requires to publish a video to the channel owner's own account:</p>
+  <ul>
+    <li>An OAuth access token and refresh token scoped to the owner's own TikTok account</li>
+    <li>Basic account identifiers needed to address API calls (e.g. open ID)</li>
+    <li>The video files, titles, and captions being published &mdash; all produced and reviewed by the owner before publishing</li>
+  </ul>
+
+  <h2>What data is not collected</h2>
+  <p>This integration does not collect data from TikTok viewers, does not access any TikTok account other than the owner's own, and does not sell, share, or use any accessed data for advertising or any purpose beyond publishing the owner's own content.</p>
+
+  <h2>Storage</h2>
+  <p>OAuth tokens are stored locally on the owner's own machine, used solely to authenticate API requests for publishing. They are not transmitted to any third party beyond TikTok's own API.</p>
+
+  <h2>Retention and deletion</h2>
+  <p>Tokens are retained until the owner revokes the integration's access via TikTok's own account settings, or deletes the local credential file. Revoking access at any time immediately stops the integration from posting.</p>
+
+  <h2>Changes</h2>
+  <p>This policy may be updated as the project evolves.</p>
+
+  <div class="contact">Questions about this policy: <strong>dailyoverclocked@gmail.com</strong></div>
+</div>
+</body>
+</html>
