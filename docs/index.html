@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Overclocked</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --bg: #0F1117; --surface: #171A22; --line: rgba(255,255,255,0.08);
+    --text: #F2F3F5; --text-dim: #9BA1AF; --orange: #FFB020; --red: #FF3B4E;
+    --grad-hot: linear-gradient(90deg, #FF8A1E, #FF3B4E);
+    --font-display: "Rajdhani", "Segoe UI", sans-serif;
+    --font-body: "IBM Plex Sans", "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #F5F4F1; --surface: #FFFFFF; --line: rgba(20,20,25,0.10);
+      --text: #191B20; --text-dim: #5B5F68; --orange: #D97F0A; --red: #D6293C;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F4F1; --surface: #FFFFFF; --line: rgba(20,20,25,0.10);
+    --text: #191B20; --text-dim: #5B5F68; --orange: #D97F0A; --red: #D6293C;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1117; --surface: #171A22; --line: rgba(255,255,255,0.08);
+    --text: #F2F3F5; --text-dim: #9BA1AF; --orange: #FFB020; --red: #FF3B4E;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: var(--font-body); display: flex; align-items: center; justify-content: center;
+  }
+  .card { max-width: 480px; padding: 48px 32px; text-align: center; }
+  .mark { width: 84px; height: 84px; margin: 0 auto 24px; }
+  h1 {
+    font-family: var(--font-display); font-weight: 700; font-size: 32px;
+    margin: 0 0 8px; letter-spacing: -0.01em;
+  }
+  p.tag { color: var(--text-dim); font-size: 15.5px; margin: 0 0 32px; }
+  .links { display: flex; flex-direction: column; gap: 10px; }
+  a.link {
+    display: block; padding: 12px 18px; border: 1px solid var(--line);
+    border-radius: 8px; color: var(--text); text-decoration: none; font-size: 14.5px;
+    background: var(--surface); transition: border-color .15s;
+  }
+  a.link:hover { border-color: var(--orange); }
+</style>
+</head>
+<body>
+<div class="card">
+  <svg class="mark" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="100" cy="100" r="92" fill="#12141C"/>
+    <path d="M 100 20 A 80 80 0 0 1 174 130" fill="none" stroke="url(#g)" stroke-width="10" stroke-linecap="round"/>
+    <path d="M 26 130 A 80 80 0 0 1 100 20" fill="none" stroke="url(#g2)" stroke-width="10" stroke-linecap="round"/>
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#FF8A1E"/><stop offset="100%" stop-color="#FF3B4E"/>
+      </linearGradient>
+      <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#FFB020"/><stop offset="100%" stop-color="#FF8A1E"/>
+      </linearGradient>
+    </defs>
+    <line x1="100" y1="100" x2="70" y2="45" stroke="#F4F5F7" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="100" cy="100" r="12" fill="#F4F5F7"/>
+    <path d="M 138 88 L 118 118 L 132 118 L 122 148 L 150 112 L 134 112 Z" fill="#FFB020"/>
+  </svg>
+  <h1>Daily Overclocked</h1>
+  <p class="tag">Fast, no-fluff breakdowns of the tech and gaming news that actually matters &mdash; new video every day.</p>
+  <div class="links">
+    <a class="link" href="https://www.youtube.com/@dailyoverclocked">Watch on YouTube</a>
+    <a class="link" href="https://www.tiktok.com/@dailyoverclocked">Watch on TikTok</a>
+    <a class="link" href="https://www.instagram.com/dailyoverclocked">Watch on Instagram</a>
+    <a class="link" href="terms.html">Terms of Service</a>
+    <a class="link" href="privacy.html">Privacy Policy</a>
+  </div>
+</div>
+</body>
+</html>
