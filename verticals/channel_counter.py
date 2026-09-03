@@ -98,6 +98,120 @@ def fetch_instagram_followers(handle: str) -> int | None:
     return None
 
 
+_YOUTUBE_VIDEO_ID_RE = re.compile(r'"videoId":"([\w-]{11})"')
+_YOUTUBE_VIEWCOUNT_RE = re.compile(r'"viewCount":"(\d+)"')
+_YOUTUBE_TITLE_RE = re.compile(r'"title":\{"simpleText":"(.*?)"\}')
+_YOUTUBE_LIKES_RE = re.compile(r'"label":"([\d.,]+[KMB]?) likes?"')
+
+_TIKTOK_ITEM_RE = re.compile(
+    r'"id":"(\d+)"[^}]*?"desc":"(.*?)".*?"diggCount":(\d+),"shareCount":(\d+),'
+    r'"commentCount":(\d+),"playCount":(\d+)'
+)
+
+_INSTAGRAM_POST_RE = re.compile(
+    r'"shortcode":"([\w-]+)".*?"edge_liked_by":\{"count":(\d+)\}.*?'
+    r'"edge_media_to_comment":\{"count":(\d+)\}',
+    re.DOTALL,
+)
+
+
+def fetch_youtube_recent_videos(handle: str, limit: int = 5) -> list[dict]:
+    """Views come straight from `videoDetails.viewCount` (exact int). Likes
+    are read from a toggle button's accessibility label ("12,345 likes"),
+    which YouTube may render abbreviated or omit — best effort only.
+    """
+    handle = handle.lstrip("@")
+    listing_html = _fetch(f"https://www.youtube.com/@{handle}/videos")
+    if not listing_html:
+        return []
+
+    seen_ids = []
+    for vid in _YOUTUBE_VIDEO_ID_RE.findall(listing_html):
+        if vid not in seen_ids:
+            seen_ids.append(vid)
+        if len(seen_ids) >= limit:
+            break
+
+    videos = []
+    for vid in seen_ids:
+        watch_html = _fetch(f"https://www.youtube.com/watch?v={vid}")
+        if not watch_html:
+            videos.append({"video_id": vid, "title": None, "views": None, "likes": None})
+            continue
+
+        views_match = _YOUTUBE_VIEWCOUNT_RE.search(watch_html)
+        title_match = _YOUTUBE_TITLE_RE.search(watch_html)
+        likes_match = _YOUTUBE_LIKES_RE.search(watch_html)
+
+        videos.append({
+            "video_id": vid,
+            "title": title_match.group(1) if title_match else None,
+            "views": int(views_match.group(1)) if views_match else None,
+            "likes": _parse_count(likes_match.group(1)) if likes_match else None,
+        })
+
+    return videos
+
+
+def fetch_tiktok_recent_videos(handle: str, limit: int = 5) -> list[dict]:
+    """Parses the ItemModule block TikTok embeds in the profile page — one
+    entry per recent video with its view/like/comment/share counts already
+    attached, so this needs only the one profile-page request.
+    """
+    handle = handle.lstrip("@")
+    html = _fetch(f"https://www.tiktok.com/@{handle}")
+    if not html:
+        return []
+
+    videos = []
+    for match in _TIKTOK_ITEM_RE.finditer(html):
+        video_id, desc, likes, shares, comments, views = match.groups()
+        videos.append({
+            "video_id": video_id,
+            "title": desc,
+            "views": int(views),
+            "likes": int(likes),
+            "comments": int(comments),
+            "shares": int(shares),
+        })
+        if len(videos) >= limit:
+            break
+
+    return videos
+
+
+def fetch_instagram_recent_posts(handle: str, limit: int = 5) -> list[dict]:
+    """Instagram's anonymous profile HTML rarely embeds full post data
+    anymore (most traffic gets redirected to a login wall), so this
+    frequently returns an empty list — that's expected, not a bug.
+    """
+    handle = handle.lstrip("@")
+    html = _fetch(f"https://www.instagram.com/{handle}/")
+    if not html:
+        return []
+
+    posts = []
+    for match in _INSTAGRAM_POST_RE.finditer(html):
+        shortcode, likes, comments = match.groups()
+        posts.append({
+            "shortcode": shortcode,
+            "likes": int(likes),
+            "comments": int(comments),
+            "url": f"https://www.instagram.com/p/{shortcode}/",
+        })
+        if len(posts) >= limit:
+            break
+
+    return posts
+
+
+VIDEO_FETCHERS = {
+    "youtube": fetch_youtube_recent_videos,
+    "tiktok": fetch_tiktok_recent_videos,
+    "instagram": fetch_instagram_recent_posts,
+}
+
+
 PLATFORM_FETCHERS = {
     "youtube": fetch_youtube_subscribers,
     "tiktok": fetch_tiktok_followers,

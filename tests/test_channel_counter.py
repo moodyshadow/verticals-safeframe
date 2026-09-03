@@ -7,6 +7,9 @@ from verticals.channel_counter import (
     fetch_youtube_subscribers,
     fetch_tiktok_followers,
     fetch_instagram_followers,
+    fetch_youtube_recent_videos,
+    fetch_tiktok_recent_videos,
+    fetch_instagram_recent_posts,
     snapshot,
     load_history,
 )
@@ -69,6 +72,80 @@ class TestFetchInstagram:
     def test_missing_data_returns_none(self):
         with patch("verticals.channel_counter._fetch", return_value="<html></html>"):
             assert fetch_instagram_followers("dailyoverclocked") is None
+
+
+class TestFetchYoutubeRecentVideos:
+    def test_parses_listing_then_watch_pages(self):
+        listing_html = '"videoId":"aaaaaaaaaaa","videoId":"bbbbbbbbbbb","videoId":"aaaaaaaaaaa"'
+        watch_html = (
+            '"videoDetails":{"videoId":"aaaaaaaaaaa"},"viewCount":"123456",'
+            '"title":{"simpleText":"Overclocking a 14900KS to 6.2GHz"},'
+            '"label":"12,345 likes"'
+        )
+
+        def fake_fetch(url, timeout=10.0):
+            if "/videos" in url:
+                return listing_html
+            return watch_html
+
+        with patch("verticals.channel_counter._fetch", side_effect=fake_fetch):
+            videos = fetch_youtube_recent_videos("dailyoverclocked", limit=2)
+
+        assert len(videos) == 2
+        assert videos[0]["video_id"] == "aaaaaaaaaaa"
+        assert videos[0]["views"] == 123456
+        assert videos[0]["likes"] == 12345
+        assert videos[0]["title"] == "Overclocking a 14900KS to 6.2GHz"
+
+    def test_listing_fetch_failure_returns_empty(self):
+        with patch("verticals.channel_counter._fetch", return_value=None):
+            assert fetch_youtube_recent_videos("dailyoverclocked") == []
+
+
+class TestFetchTiktokRecentVideos:
+    def test_parses_item_module(self):
+        html = (
+            '{"id":"7123456789012345678","desc":"6.2GHz on air, no cap",'
+            '"stats":{"diggCount":5000,"shareCount":200,"commentCount":150,"playCount":100000}}'
+        )
+        with patch("verticals.channel_counter._fetch", return_value=html):
+            videos = fetch_tiktok_recent_videos("dailyoverclocked", limit=5)
+
+        assert len(videos) == 1
+        assert videos[0]["video_id"] == "7123456789012345678"
+        assert videos[0]["title"] == "6.2GHz on air, no cap"
+        assert videos[0]["views"] == 100000
+        assert videos[0]["likes"] == 5000
+        assert videos[0]["comments"] == 150
+        assert videos[0]["shares"] == 200
+
+    def test_no_items_returns_empty(self):
+        with patch("verticals.channel_counter._fetch", return_value="<html></html>"):
+            assert fetch_tiktok_recent_videos("dailyoverclocked") == []
+
+    def test_fetch_failure_returns_empty(self):
+        with patch("verticals.channel_counter._fetch", return_value=None):
+            assert fetch_tiktok_recent_videos("dailyoverclocked") == []
+
+
+class TestFetchInstagramRecentPosts:
+    def test_parses_post_edges(self):
+        html = (
+            '"shortcode":"Cabc123XYZ","edge_liked_by":{"count":4200},'
+            '"edge_media_to_comment":{"count":85}'
+        )
+        with patch("verticals.channel_counter._fetch", return_value=html):
+            posts = fetch_instagram_recent_posts("dailyoverclocked", limit=5)
+
+        assert len(posts) == 1
+        assert posts[0]["shortcode"] == "Cabc123XYZ"
+        assert posts[0]["likes"] == 4200
+        assert posts[0]["comments"] == 85
+        assert posts[0]["url"] == "https://www.instagram.com/p/Cabc123XYZ/"
+
+    def test_no_posts_returns_empty(self):
+        with patch("verticals.channel_counter._fetch", return_value="<html></html>"):
+            assert fetch_instagram_recent_posts("dailyoverclocked") == []
 
 
 class TestSnapshot:

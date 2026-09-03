@@ -377,7 +377,7 @@ def cmd_voices(args):
 
 
 def cmd_channel_counter(args):
-    from .channel_counter import snapshot, load_history
+    from .channel_counter import snapshot, load_history, VIDEO_FETCHERS
 
     handles = {}
     if args.youtube:
@@ -404,6 +404,21 @@ def cmd_channel_counter(args):
         print(f"\n  History ({len(past)} snapshot(s)):")
         for r in past:
             print(f"    {r['logged_at']}  total={_fmt(r['total'])}")
+
+    if args.videos:
+        for platform, fetch in VIDEO_FETCHERS.items():
+            print(f"\n  {platform.capitalize()} — last {args.videos} video(s):")
+            items = fetch(handles.get(platform, args.handle), limit=args.videos)
+            if not items:
+                print("    (none found — page may be gated or markup changed)")
+                continue
+            for item in items:
+                title = (item.get("title") or item.get("shortcode") or "?")[:60]
+                stats = ", ".join(
+                    f"{k}={_fmt(v)}" for k, v in item.items()
+                    if k not in ("video_id", "title", "shortcode", "url") and v is not None
+                )
+                print(f"    {title:60.60}  {stats}")
 
 
 def main():
@@ -479,6 +494,7 @@ def main():
     p_counter.add_argument("--tiktok", default=None, help="Override handle for TikTok")
     p_counter.add_argument("--instagram", default=None, help="Override handle for Instagram")
     p_counter.add_argument("--history", action="store_true", help="Show past snapshots for this handle")
+    p_counter.add_argument("--videos", type=int, default=0, help="Also fetch stats for the last N videos/posts per platform")
 
     args = parser.parse_args()
 
