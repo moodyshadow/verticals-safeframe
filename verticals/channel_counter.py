@@ -38,7 +38,10 @@ _HEADERS = {
     ),
 }
 
-_YOUTUBE_SUB_RE = re.compile(r'"subscriberCountText":\{"simpleText":"([\d.,KMB]+)')
+# YouTube used to nest this as {"simpleText": "1.2M subscribers"}; as of
+# late 2026 it's a plain string field instead — confirmed via a live debug
+# run: `"subscriberCountText":"7 subscribers"`.
+_YOUTUBE_SUB_RE = re.compile(r'"subscriberCountText":"([\d.,]+[KMB]?) subscribers?"')
 _TIKTOK_FOLLOWER_RE = re.compile(r'"followerCount":(\d+)')
 _INSTAGRAM_FOLLOWER_RE = re.compile(r'"edge_followed_by":\{"count":(\d+)\}')
 _INSTAGRAM_META_RE = re.compile(
@@ -114,7 +117,7 @@ def fetch_youtube_subscribers(handle: str) -> int | None:
     if not match:
         _debug_no_match("youtube", html)
         return None
-    return _parse_count(match.group(1).replace(" subscribers", ""))
+    return _parse_count(match.group(1))
 
 
 def fetch_tiktok_followers(handle: str) -> int | None:
