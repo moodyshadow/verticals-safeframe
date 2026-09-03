@@ -13,6 +13,7 @@ broken platform never blocks the other two.
 import json
 import os
 import re
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -24,6 +25,11 @@ from .config import SKILL_DIR
 # repo path (e.g. data/channel_counter.jsonl) instead of the user's home dir.
 _override = os.environ.get("CHANNEL_COUNTER_HISTORY_PATH")
 HISTORY_PATH = Path(_override) if _override else SKILL_DIR / "channel_counter.jsonl"
+
+# Set CHANNEL_COUNTER_DEBUG=1 to print why a fetch failed (HTTP status,
+# timeout, DNS error) instead of silently returning None. Off by default
+# so a normal run stays quiet.
+_DEBUG = os.environ.get("CHANNEL_COUNTER_DEBUG") == "1"
 
 _HEADERS = {
     "User-Agent": (
@@ -44,8 +50,17 @@ def _fetch(url: str, timeout: float = 10.0) -> str | None:
     req = urllib.request.Request(url, headers=_HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8", errors="replace")
-    except (URLError, HTTPError, TimeoutError, ValueError):
+            body = resp.read().decode("utf-8", errors="replace")
+            if _DEBUG:
+                print(f"  [debug] GET {url} -> {resp.status}, {len(body)} bytes", file=sys.stderr)
+            return body
+    except HTTPError as e:
+        if _DEBUG:
+            print(f"  [debug] GET {url} -> HTTPError {e.code} {e.reason}", file=sys.stderr)
+        return None
+    except (URLError, TimeoutError, ValueError) as e:
+        if _DEBUG:
+            print(f"  [debug] GET {url} -> {type(e).__name__}: {e}", file=sys.stderr)
         return None
 
 
@@ -62,6 +77,12 @@ def _parse_count(text: str) -> int | None:
         return None
 
 
+def _debug_no_match(platform: str, html: str) -> None:
+    if _DEBUG:
+        snippet = "consent" if "consent" in html.lower() else ("login" in html.lower() and "login") or "?"
+        print(f"  [debug] {platform}: fetched {len(html)} bytes but pattern didn't match (hint: {snippet})", file=sys.stderr)
+
+
 def fetch_youtube_subscribers(handle: str) -> int | None:
     handle = handle.lstrip("@")
     html = _fetch(f"https://www.youtube.com/@{handle}/about")
@@ -69,6 +90,7 @@ def fetch_youtube_subscribers(handle: str) -> int | None:
         return None
     match = _YOUTUBE_SUB_RE.search(html)
     if not match:
+        _debug_no_match("youtube", html)
         return None
     return _parse_count(match.group(1).replace(" subscribers", ""))
 
@@ -80,6 +102,7 @@ def fetch_tiktok_followers(handle: str) -> int | None:
         return None
     match = _TIKTOK_FOLLOWER_RE.search(html)
     if not match:
+        _debug_no_match("tiktok", html)
         return None
     return int(match.group(1))
 
@@ -95,6 +118,7 @@ def fetch_instagram_followers(handle: str) -> int | None:
     match = _INSTAGRAM_META_RE.search(html)
     if match:
         return _parse_count(match.group(1))
+    _debug_no_match("instagram", html)
     return None
 
 

@@ -7,6 +7,11 @@ on:
     # minutes risks getting the runner IP range rate-limited or blocked.
     - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      debug:
+        description: "Log why a platform fetch failed (HTTP status, no-match reason)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -29,6 +34,7 @@ jobs:
       - name: Fetch channel snapshot
         env:
           CHANNEL_COUNTER_HISTORY_PATH: ${{ github.workspace }}/data/channel_counter.jsonl
+          CHANNEL_COUNTER_DEBUG: ${{ inputs.debug && '1' || '0' }}
         run: python -m verticals channel-counter --handle dailyoverclocked --history
 
       - name: Commit snapshot
