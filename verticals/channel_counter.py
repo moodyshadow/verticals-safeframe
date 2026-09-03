@@ -11,14 +11,19 @@ fetch function fails soft (returns None) rather than raising, so one
 broken platform never blocks the other two.
 """
 import json
+import os
 import re
 import time
 import urllib.request
+from pathlib import Path
 from urllib.error import URLError, HTTPError
 
 from .config import SKILL_DIR
 
-HISTORY_PATH = SKILL_DIR / "channel_counter.jsonl"
+# Override for CI/scheduled runs that want the history file committed to a
+# repo path (e.g. data/channel_counter.jsonl) instead of the user's home dir.
+_override = os.environ.get("CHANNEL_COUNTER_HISTORY_PATH")
+HISTORY_PATH = Path(_override) if _override else SKILL_DIR / "channel_counter.jsonl"
 
 _HEADERS = {
     "User-Agent": (
@@ -122,7 +127,7 @@ def snapshot(handle: str, handles: dict[str, str] | None = None) -> dict:
         "total": sum(known) if known else None,
     }
 
-    SKILL_DIR.mkdir(parents=True, exist_ok=True)
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 

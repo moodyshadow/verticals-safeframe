@@ -1,0 +1,40 @@
+name: Channel Counter
+
+on:
+  schedule:
+    # Hourly, not every 10 minutes: follower counts don't move that fast,
+    # and scraping these platforms from shared GitHub-runner IPs every 10
+    # minutes risks getting the runner IP range rate-limited or blocked.
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Only PyYAML is needed to import the CLI entry point; channel_counter.py
+      # itself is stdlib-only (urllib), so this stays fast even hourly.
+      - name: Install dependencies
+        run: pip install PyYAML
+
+      - name: Fetch channel snapshot
+        env:
+          CHANNEL_COUNTER_HISTORY_PATH: ${{ github.workspace }}/data/channel_counter.jsonl
+        run: python -m verticals channel-counter --handle dailyoverclocked --history
+
+      - name: Commit snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/channel_counter.jsonl
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "channel-counter: dailyoverclocked snapshot"
+          git push
