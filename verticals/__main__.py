@@ -376,6 +376,36 @@ def cmd_voices(args):
             _print_voice_row(v)
 
 
+def cmd_channel_counter(args):
+    from .channel_counter import snapshot, load_history
+
+    handles = {}
+    if args.youtube:
+        handles["youtube"] = args.youtube
+    if args.tiktok:
+        handles["tiktok"] = args.tiktok
+    if args.instagram:
+        handles["instagram"] = args.instagram
+
+    print(f"\n  Fetching counts for '{args.handle}' across YouTube, TikTok, Instagram...")
+    record = snapshot(args.handle, handles=handles)
+
+    def _fmt(n):
+        return f"{n:,}" if n is not None else "unavailable"
+
+    print(f"\n  YouTube:   {_fmt(record['counts']['youtube'])}")
+    print(f"  TikTok:    {_fmt(record['counts']['tiktok'])}")
+    print(f"  Instagram: {_fmt(record['counts']['instagram'])}")
+    print(f"  ─────────────────────")
+    print(f"  Total:     {_fmt(record['total'])}")
+
+    if args.history:
+        past = load_history(args.handle)
+        print(f"\n  History ({len(past)} snapshot(s)):")
+        for r in past:
+            print(f"    {r['logged_at']}  total={_fmt(r['total'])}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Verticals v3 — AI-Native Vertical Video Engine",
@@ -439,6 +469,17 @@ def main():
     p_voices = sub.add_parser("voices", help="List TTS voices (currently: 60db)")
     p_voices.add_argument("--provider", default="60db", help="TTS provider (only '60db' supported)")
 
+    # channel-counter
+    p_counter = sub.add_parser(
+        "channel-counter",
+        help="Track a channel's follower/subscriber count across YouTube, TikTok, and Instagram",
+    )
+    p_counter.add_argument("--handle", required=True, help="Channel handle, e.g. dailyoverclocked")
+    p_counter.add_argument("--youtube", default=None, help="Override handle for YouTube")
+    p_counter.add_argument("--tiktok", default=None, help="Override handle for TikTok")
+    p_counter.add_argument("--instagram", default=None, help="Override handle for Instagram")
+    p_counter.add_argument("--history", action="store_true", help="Show past snapshots for this handle")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -454,6 +495,9 @@ def main():
         return
     if args.cmd == "voices":
         cmd_voices(args)
+        return
+    if args.cmd == "channel-counter":
+        cmd_channel_counter(args)
         return
 
     maybe_run_setup(args)
