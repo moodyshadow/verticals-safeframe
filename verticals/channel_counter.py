@@ -77,10 +77,25 @@ def _parse_count(text: str) -> int | None:
         return None
 
 
+# Structural markers that confirm we got the real data-bearing page (not a
+# consent/login interstitial) even though our specific regex didn't match —
+# lets us tell "wrong regex, right page" apart from "wrong page entirely".
+_PLATFORM_MARKERS = {
+    "youtube": ["ytInitialData", "subscriberCount", "consent.youtube.com"],
+    "tiktok": ["SIGI_STATE", "ItemModule", "followerCount", "\"redirect\""],
+    "instagram": ["edge_followed_by", "edge_owner_to_timeline_media", "www.instagram.com/accounts/login"],
+}
+
+
 def _debug_no_match(platform: str, html: str) -> None:
-    if _DEBUG:
-        snippet = "consent" if "consent" in html.lower() else ("login" in html.lower() and "login") or "?"
-        print(f"  [debug] {platform}: fetched {len(html)} bytes but pattern didn't match (hint: {snippet})", file=sys.stderr)
+    if not _DEBUG:
+        return
+    found = [m for m in _PLATFORM_MARKERS.get(platform, []) if m.lower() in html.lower()]
+    print(
+        f"  [debug] {platform}: fetched {len(html)} bytes, pattern didn't match. "
+        f"Markers present: {found or '(none of ' + str(_PLATFORM_MARKERS.get(platform, [])) + ')'}",
+        file=sys.stderr,
+    )
 
 
 def fetch_youtube_subscribers(handle: str) -> int | None:
