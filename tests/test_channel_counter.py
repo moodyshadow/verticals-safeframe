@@ -34,9 +34,16 @@ class TestParseCount:
 
 class TestFetchYoutube:
     def test_parses_subscriber_count(self):
-        html = '"subscriberCountText":{"simpleText":"1.5M subscribers"}'
+        # Current live field shape (confirmed via a debug CI run against the
+        # real dailyoverclocked channel): a plain string, not a nested object.
+        html = '"subscriberCountText":"1.5M subscribers","viewCountText":"277 views"'
         with patch("verticals.channel_counter._fetch", return_value=html):
             assert fetch_youtube_subscribers("dailyoverclocked") == 1_500_000
+
+    def test_parses_singular_subscriber(self):
+        html = '"subscriberCountText":"1 subscriber"'
+        with patch("verticals.channel_counter._fetch", return_value=html):
+            assert fetch_youtube_subscribers("dailyoverclocked") == 1
 
     def test_missing_data_returns_none(self):
         with patch("verticals.channel_counter._fetch", return_value="<html></html>"):
