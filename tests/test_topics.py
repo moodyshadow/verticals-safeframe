@@ -44,8 +44,15 @@ class TestRedditSource:
         src = RedditSource({"subreddits": ["gaming", "science"]})
         assert src.subreddits == ["gaming", "science"]
 
+    @patch("verticals.topics.reddit.get_reddit_credentials", return_value=("id", "secret"))
+    @patch("verticals.topics.reddit.requests.post")
     @patch("verticals.topics.reddit.requests.get")
-    def test_fetch_parses_reddit_json(self, mock_get):
+    def test_fetch_parses_reddit_json(self, mock_get, mock_post, mock_creds):
+        mock_token_response = MagicMock()
+        mock_token_response.json.return_value = {"access_token": "tok", "expires_in": 3600}
+        mock_token_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_token_response
+
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
