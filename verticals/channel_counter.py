@@ -96,6 +96,13 @@ def _debug_no_match(platform: str, html: str) -> None:
         f"Markers present: {found or '(none of ' + str(_PLATFORM_MARKERS.get(platform, [])) + ')'}",
         file=sys.stderr,
     )
+    # Print raw context around the first hit of each found marker so the
+    # actual current field name/shape can be read straight out of CI logs
+    # instead of guessing at a new regex blind.
+    for marker in found:
+        idx = html.lower().find(marker.lower())
+        start, end = max(0, idx - 60), min(len(html), idx + len(marker) + 140)
+        print(f"  [debug] {platform}: context around '{marker}': ...{html[start:end]!r}...", file=sys.stderr)
 
 
 def fetch_youtube_subscribers(handle: str) -> int | None:
