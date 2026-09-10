@@ -48,6 +48,8 @@ strip_audio.py
 pedalboard_short.py
 run_openclaw_audit.bat
 run_scan.bat
+bot_discussion.py
+run_bot_discussion.bat
 
 # OS
 .DS_Store
