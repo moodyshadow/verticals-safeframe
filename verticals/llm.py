@@ -99,7 +99,16 @@ def call_llm(prompt: str, provider: str | None = None, max_tokens: int = 1500) -
     elif provider == "openai":
         return _call_openai(prompt, max_tokens)
     elif provider == "ollama":
-        return _call_ollama(prompt)
+        # Local models (e.g. llama3.1:8b) tend to be more verbose per unit
+        # of content than the cloud providers this default was tuned for,
+        # and this schema packs a lot into one response (script + 8 b-roll
+        # prompts + title + description + tags + thumbnail prompt) — a
+        # truncated Pokémon script ("let me explain why this is a
+        # disaster" with no actual explanation) traced back to Ollama
+        # hitting its response-length limit mid-JSON. Local compute is
+        # effectively free, so give it real headroom instead of the same
+        # tight budget tuned for paid APIs.
+        return _call_ollama(prompt, max(max_tokens, 3000))
     elif provider == "litellm":
         return _call_litellm(prompt, max_tokens)
     else:
@@ -161,7 +170,7 @@ def _call_gemini(prompt: str, max_tokens: int) -> str:
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta"
-        "/models/gemini-2.0-flash:generateContent"
+        "/models/gemini-3.6-flash:generateContent"
     )
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -222,7 +231,7 @@ def _call_openai(prompt: str, max_tokens: int) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
-def _call_ollama(prompt: str) -> str:
+def _call_ollama(prompt: str, max_tokens: int = 1500) -> str:
     """Call Ollama locally (no API key needed).
 
     Tries models in preference order: llama3.1:8b, mistral, gemma2.
@@ -239,8 +248,11 @@ def _call_ollama(prompt: str) -> str:
     if not available:
         raise RuntimeError("No Ollama models found. Pull one: ollama pull llama3.1:8b")
 
-    # Pick best available model
-    preferred = ["llama3.1:8b", "llama3:8b", "mistral", "gemma2", "qwen2.5:7b"]
+    # Pick best available model. qwen2.5:14b-instruct is preferred over the
+    # smaller 8B models — it follows the strict JSON + CTA-matching prompt
+    # far more reliably (llama3.1:8b was failing grounding/CTA checks on
+    # nearly every draft attempt).
+    preferred = ["qwen2.5:14b-instruct", "llama3.1:8b", "llama3:8b", "mistral", "gemma2", "qwen2.5:7b"]
     model = None
     for pref in preferred:
         for avail in available:
@@ -257,12 +269,42 @@ def _call_ollama(prompt: str) -> str:
     r = requests.post(
         "http://localhost:11434/api/generate",
         json={"model": model, "prompt": prompt, "stream": False},
-        timeout=120,
+        # max_tokens above was already bumped to 3000+ for local models with
+        # a comment about giving "real headroom" — but this timeout was
+        # never raised to match, so a genuinely large draft response (full
+        # script + 8 broll_prompts + title/description/tags) could still
+        # get cut off mid-generation on slower hardware.
+        timeout=420,
     )
     if r.status_code != 200:
         raise RuntimeError(f"Ollama {r.status_code}: {r.text[:300]}")
 
-    return r.json().get("response", "").strip()
+    text = r.json().get("response", "").strip()
+    if not text:
+        # Observed repeatedly: the first call right after a model was
+        # idle-evicted from VRAM (Ollama's default 5-min keep_alive) gets
+        # back a 200 with a genuinely empty "response" field almost
+        # instantly — not a slow timeout, a fast no-op — consistent with the
+        # generate call racing the model's own cold-load into VRAM. A single
+        # 3s retry wasn't enough (a full cold load can take well over that);
+        # back off harder across a couple of attempts before giving up. A
+        # real failure (bad prompt, model missing) would still be empty on
+        # the last attempt and surface as the caller's own error.
+        import time
+        for delay in (8, 20):
+            time.sleep(delay)
+            r = requests.post(
+                "http://localhost:11434/api/generate",
+                json={"model": model, "prompt": prompt, "stream": False},
+                timeout=420,
+            )
+            if r.status_code != 200:
+                raise RuntimeError(f"Ollama {r.status_code}: {r.text[:300]}")
+            text = r.json().get("response", "").strip()
+            if text:
+                break
+
+    return text
 
 
 def _call_litellm(prompt: str, max_tokens: int) -> str:

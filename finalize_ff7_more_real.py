@@ -1,0 +1,55 @@
+import json
+from pathlib import Path
+from PIL import Image
+from verticals.config import VIDEO_WIDTH, VIDEO_HEIGHT
+from verticals.assemble import assemble_video
+
+WORK_DIR = Path(r"C:\Users\szabo\.verticals\media\work_1788467225_en")
+draft_path = Path(r"C:\Users\szabo\.verticals\drafts\1788467225.json")
+draft = json.loads(draft_path.read_text(encoding="utf-8"))
+SRC = Path(r"C:\Users\szabo\Downloads\FF8 b-roll")
+
+def resize_crop(src, dst):
+    img = Image.open(src).convert("RGB")
+    ow, oh = img.size
+    scale = max(VIDEO_WIDTH / ow, VIDEO_HEIGHT / oh)
+    nw, nh = int(ow * scale), int(oh * scale)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    left = (nw - VIDEO_WIDTH) // 2
+    top = (nh - VIDEO_HEIGHT) // 2
+    img = img.crop((left, top, left + VIDEO_WIDTH, top + VIDEO_HEIGHT))
+    img.save(dst)
+
+replacements = {
+    0: (SRC / "square-enix-logo.jpg", "broll_0_squareenix.png"),
+    2: (SRC / "EN_25_ff7rebirth_SS_0207_Trailer.webp", "broll_2_cloudcloseup.png"),
+    4: (SRC / "FF7Rebirth_Nibelheim-1024x576.jpg", "broll_4_nibelheim.png"),
+}
+
+frames = draft["_pipeline_state"]["broll"]["artifacts"]["frames"]
+for idx, (src, out_name) in replacements.items():
+    out_path = WORK_DIR / out_name
+    resize_crop(src, out_path)
+    frames[idx] = str(out_path)
+    print(f"Frame {idx} -> {out_path}")
+
+draft["_pipeline_state"]["broll"]["artifacts"]["frames"] = frames
+
+ps = draft["_pipeline_state"]
+vo_path = Path(ps["voiceover"]["artifacts"]["path"])
+captions = ps["captions"]["artifacts"]
+music = ps["music"]["artifacts"]
+
+video_path = assemble_video(
+    frames=[Path(f) for f in frames], voiceover=vo_path, out_dir=WORK_DIR, job_id="1788467225", lang="en",
+    ass_path=captions["ass_path"], music_path=music["track_path"],
+    duck_filter=music["duck_filter"], srt_path=captions["srt_path"],
+)
+print("Rebuilt video:", video_path)
+
+draft["_pipeline_state"]["assemble"]["artifacts"]["video_path"] = str(video_path)
+draft["video_en"] = str(video_path)
+draft.pop("reviewed_by_claude", None)
+draft.pop("reviewed_at", None)
+draft_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False), encoding="utf-8")
+print("Draft updated.")

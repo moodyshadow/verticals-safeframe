@@ -71,8 +71,17 @@ def _fetch_ddg(keywords: str) -> str:
 
 
 def _research_via_ddg(news: str) -> str:
-    keywords = extract_keywords(news)
-    html = _fetch_ddg(keywords)
+    return search_ddg_snippets(extract_keywords(news))
+
+
+def search_ddg_snippets(query: str) -> str:
+    """DDG snippet search on a query used as-is, with no keyword-extraction
+    step. `_research_via_ddg` routes short news headlines through
+    `extract_keywords()` first (tuned for that use case — see its
+    docstring), but a caller with an already-concise, deliberately-chosen
+    query (e.g. marketing_agent.py's growth-tactics search) needs it sent
+    to DDG unmangled, not reduced to its 4 longest words."""
+    html = _fetch_ddg(query)
 
     snippets = []
 
@@ -104,7 +113,7 @@ def _research_via_ddg(news: str) -> str:
     return "\n".join(snippets[:8]) if snippets else ""
 
 
-def research_topic(news: str, url: str = "", summary: str = "") -> str:
+def research_topic(news: str, url: str = "", summary: str = "", urls: list[str] | None = None) -> str:
     """Ground the script in real facts, preferring the actual source article.
 
     Priority order:
@@ -117,7 +126,24 @@ def research_topic(news: str, url: str = "", summary: str = "") -> str:
        endpoint increasingly serves anti-bot challenges to scripted
        requests, so this frequently returns nothing).
     4. A "no research available" placeholder — the script must stay general.
+
+    When `urls` (2+ sources) is given, each is fetched and combined into one
+    research block so the script can weave multiple stories together — the
+    single-`url` path above is skipped in that case.
     """
+    if urls:
+        blocks = []
+        for u in urls:
+            log(f"Fetching source article: {u}")
+            try:
+                article = fetch_article_text(u)
+                if len(article) > 200:
+                    blocks.append(f"Source article ({u}):\n{article}")
+            except Exception as e:
+                log(f"Article fetch failed for {u}: {e}")
+        if blocks:
+            return f"Topic: {news}\n\n" + "\n\n".join(blocks)
+
     if url:
         log(f"Fetching source article: {url}")
         try:

@@ -9,6 +9,30 @@ script:
   word_count: "140 to 165"
   sentence_style: "very short sentences, fragments okay for emphasis, rhetorical questions work"
 
+  # Mood variants — same pattern as hooks/cta_variants: the LLM picks the one
+  # whose "when" best fits today's specific story, and lets it shape word
+  # choice/energy through the WHOLE script (not just the hook or CTA line).
+  # Added because every gaming script defaulted to the same "energetic,
+  # opinionated" tone regardless of whether the story actually called for
+  # hype, outrage, or something more measured — a leak/rumor and a
+  # community-drama story shouldn't read identically.
+  mood_variants:
+    - id: hype
+      description: "genuinely excited, fast, can't-believe-it energy"
+      when: "good news for players: a great update, surprise reveal, beloved feature returning"
+    - id: outraged
+      description: "sharp, indignant, calling out a bad decision directly"
+      when: "anti-consumer move, greedy monetization, broken promise, bad corporate decision"
+    - id: sarcastic
+      description: "dry, mocking, deadpan roast of corporate spin or hypocrisy"
+      when: "a company says something absurd, a transparent PR excuse, obvious doublespeak"
+    - id: concerned
+      description: "measured, slightly worried, thinking about what this means long-term"
+      when: "a trend or decision with troubling implications that aren't fully playing out yet"
+    - id: nostalgic
+      description: "warm, wistful, fond memory energy before snapping back to the news"
+      when: "a classic game revival, remaster, or story that calls back to an older era"
+
   hooks:
     - id: outrage
       template: "{company} just did the one thing nobody wanted. And it's worse than you think."
@@ -33,10 +57,29 @@ script:
       when: "contrarian position that can be backed with evidence"
 
   cta_variants:
-    - "Follow for daily gaming news."
-    - "Subscribe if you're tired of clickbait gaming channels."
-    - "Drop your take in the comments."
-    - "Part 2 tomorrow. Don't miss it."
+    # 2026-09-04: was hardcoded to ALWAYS use stay_overclocked verbatim on
+    # every video — real data showed 0 comments across all 11 published
+    # videos despite that CTA explicitly asking for them. A generic "what
+    # topic next" ask that never references what the video was actually
+    # about is easy to scroll past. pick_a_side/prediction ask a specific,
+    # low-effort question tied to today's real subject instead — the bet is
+    # that specificity is what was missing, not the ask itself.
+    # 2026-09-08: pick_a_side/prediction never actually said "subscribe" out
+    # loud — only the stay_overclocked fallback did. The visual subscribe
+    # button still popped up on every video (its timing is keyed off the
+    # word "comment", not "subscribe"), but with no matching audio/caption
+    # ask, most videos were showing a silent button nobody was told to tap.
+    # Added a short subscribe clause to all three so every video reinforces
+    # it verbally, not just the fallback.
+    - id: pick_a_side
+      template: "Team {side_a} or team {side_b}? Comment your pick, and subscribe for more."
+      when: "the story has two clear, nameable opposing camps/positions (two games, two studios, devs vs players) that a viewer could quickly take a side on"
+    - id: prediction
+      template: "Comment your prediction: does {subject} actually happen, or does this fall apart? I'll pin the best one. Subscribe for more."
+      when: "the story is still unresolved/developing (a rumor not yet confirmed, a release not yet out, a controversy not yet settled) so a viewer could plausibly guess the outcome"
+    - id: stay_overclocked
+      template: "Let me know in the comments what topic you'd like us to cover next. Subscribe to stay overclocked on the latest gaming news."
+      when: "fallback — use only when neither pick_a_side nor prediction genuinely fits the story (no clear two-sided angle and nothing left unresolved to predict)"
 
   forbidden_phrases:
     - "what's up gamers"
@@ -50,11 +93,19 @@ script:
     closing: "Strong take. Not neutral. Pick a side. Then CTA."
 
 visuals:
-  # Gaming stories are almost always about a specific, copyrighted game —
-  # no free stock site can legally have real screenshots of it, so stock
-  # search only ever returns generic "gaming vibes" filler that doesn't
-  # actually match the subject. Go straight to AI generation instead.
-  stock_source: "ai_only"
+  # Gaming stories are usually about a specific, copyrighted game — no free
+  # stock site can legally have real screenshots of it, so a stock search
+  # for those beats only ever returns generic "gaming vibes" filler. But
+  # plenty of beats in a gaming-news script are generic real-world scenes
+  # (a fire marshal, a crowd, a convention hall exterior) that real stock
+  # footage covers fine and more reliably than AI generation (e.g. the
+  # "fire marshal speaking with staff" AnimateDiff clip that came out with
+  # a garbled ghost-limb artifact from motion-interpolating across an
+  # incoherent scene change — a stock clip wouldn't have that failure mode
+  # at all). Try stock first per-prompt, same as entertainment/tech — it
+  # naturally falls through to AI generation for the specific/copyrighted
+  # beats where no real stock match exists.
+  stock_source: "pexels_first"
   style: "vibrant, high contrast, game aesthetic inspired, dark backgrounds with colorful accents"
   mood: "energetic, dramatic, slightly chaotic"
   color_palette: ["#0D0D0D", "#1A0033", "#FF4444", "#FFD700", "#00BFFF"]
@@ -82,7 +133,7 @@ voice:
 
   suggested_voices:
     edge_tts:
-      en: "en-US-ChristopherNeural"
+      en: "en-US-RogerNeural"
       hi: "hi-IN-MadhurNeural"
     elevenlabs:
       voice_id: "JBFqnCBsd6RMkjVDRZzb"
@@ -101,8 +152,8 @@ voice:
 captions:
   highlight_color: "#FFD700"
   text_color: "#FFFFFF"
-  font_family: "Arial"
-  font_size: 76
+  font_family: "Arial Black"
+  font_size: 68
   font_weight: "bold"
   position: "lower_third"
   background: "semi_transparent_dark"

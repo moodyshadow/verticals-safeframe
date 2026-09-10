@@ -78,8 +78,9 @@ def get_script_context(profile: dict) -> str:
     if not script:
         return ""
 
+    niche_display = profile.get("display_name", profile.get("name", "General"))
     parts = []
-    parts.append(f"NICHE: {profile.get('display_name', profile.get('name', 'General'))}")
+    parts.append(f"NICHE: {niche_display}")
 
     if script.get("tone"):
         parts.append(f"TONE: {script['tone']}")
@@ -91,6 +92,27 @@ def get_script_context(profile: dict) -> str:
         parts.append(f"TARGET WORD COUNT: {script['word_count']}")
     if script.get("sentence_style"):
         parts.append(f"SENTENCE STYLE: {script['sentence_style']}")
+
+    # Mood variants — pick one, let it shape word choice/energy through the
+    # whole script (not just the hook or CTA line).
+    moods = script.get("mood_variants", [])
+    if moods:
+        mood_lines = []
+        for m in moods:
+            desc = m.get("description", "")
+            when = m.get("when", "")
+            if desc:
+                line = f"  {m.get('id', 'mood')}: {desc}"
+                if when:
+                    line += f" (use when: {when})"
+                mood_lines.append(line)
+        if mood_lines:
+            parts.append(
+                "MOOD OPTIONS (pick the one that actually fits today's story "
+                "and let it color the whole script's word choice and energy, "
+                "not just the opening or closing line):"
+            )
+            parts.extend(mood_lines)
 
     # Hook patterns
     hooks = script.get("hooks", [])
@@ -105,7 +127,13 @@ def get_script_context(profile: dict) -> str:
                     line += f" (use when: {when})"
                 hook_lines.append(line)
         if hook_lines:
-            parts.append("HOOK PATTERNS (pick the most appropriate for this topic):")
+            parts.append(
+                "HOOK PATTERNS (style/structure inspiration, not a literal "
+                "pick-list — write an original opening line in the spirit "
+                "of whichever pattern best fits today's story, rather than "
+                "reusing one of these verbatim. The goal is a hook that "
+                "feels fresh every video, not a repeated template):"
+            )
             parts.extend(hook_lines)
 
     # Structure guidance
@@ -119,10 +147,50 @@ def get_script_context(profile: dict) -> str:
         if structure.get("closing"):
             parts.append(f"  Closing: {structure['closing']}")
 
-    # CTA variants
+    # CTA variants — templates with a {beat}-style placeholder, same pattern
+    # as hooks. YouTube's own analytics flagged generic CTAs as a growth
+    # blocker, but the fix is NOT to name the day's specific one-off subject
+    # (a real miss this project made: "Follow for more Pokémon updates!" on
+    # a channel that covers a completely different game/topic every day —
+    # nobody who subscribed for Pokémon updates has any reason to stick
+    # around for tomorrow's Nvidia story). The placeholder must be filled
+    # with the channel's ongoing coverage CATEGORY (e.g. "gaming news",
+    # "entertainment news") — something true of every future video, not
+    # just this one. "Subscribe to stay overclocked on the latest gaming
+    # news" converts because it's concrete AND still true next week;
+    # "...on the latest Pokémon news" doesn't.
     ctas = script.get("cta_variants", [])
     if ctas:
-        parts.append(f"CTA OPTIONS (pick one): {', '.join(ctas)}")
+        cta_lines = []
+        for c in ctas:
+            if isinstance(c, dict):
+                template = c.get("template", "")
+                when = c.get("when", "")
+                if template:
+                    line = f"  {c.get('id', 'cta')}: \"{template}\""
+                    if when:
+                        line += f" (use when: {when})"
+                    cta_lines.append(line)
+            else:
+                cta_lines.append(f"  \"{c}\"")
+        if cta_lines:
+            parts.append(
+                "CTA OPTIONS (pick the most appropriate; fill any {beat} "
+                "placeholder with this channel's ongoing coverage category, "
+                "per that option's own guidance below — NEVER with today's "
+                "specific one-off subject/character/game name, since "
+                "tomorrow's video won't be about that. The exception: a "
+                "variant whose own guidance explicitly asks for today's real "
+                "specifics (e.g. {subject}, {side_a}/{side_b}) — those exist "
+                "specifically to reference this video's actual story, but "
+                "ONLY use that variant at all when its own 'when' guidance "
+                "genuinely applies). Use the chosen template's fixed wording "
+                "VERBATIM (only the {placeholder} itself gets filled in) — "
+                "do not paraphrase or rewrite it, since the closing line is "
+                "checked against these exact templates and a paraphrase "
+                "will be rejected:"
+            )
+            parts.extend(cta_lines)
 
     # Forbidden phrases
     forbidden = script.get("forbidden_phrases", [])

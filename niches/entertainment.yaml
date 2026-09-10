@@ -13,8 +13,12 @@ script:
       template: "Let me break down {topic} in 60 seconds."
       when: "complex topic"
   cta_variants:
-    - "Follow for more."
-    - "What do you think? Comment below."
+    - id: stay_updated
+      template: "Follow for more {beat}."
+      when: "default closer — {beat} must be the channel's ongoing coverage category (\"tech and gaming news\"), never today's specific movie/show/celebrity"
+    - id: comment_prompt
+      template: "What do you think? Comment below."
+      when: "story invites debate or a strong opinion either way"
   forbidden_phrases:
     - "like and subscribe"
     - "smash that bell"

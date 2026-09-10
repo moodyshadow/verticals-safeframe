@@ -6,28 +6,51 @@ from pathlib import Path
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-from .broll import _broll_provider, _sd_webui_url
-from .config import get_gemini_key
+from .broll import _broll_provider, _sd_webui_url, _vision_qa_frame
+from .config import get_gemini_key, VIDEO_WIDTH, VIDEO_HEIGHT
 from .log import log
 from .retry import with_retry
 
+# Landscape (traditional long-form) thumbnail dimensions.
 THUMB_WIDTH = 1280
 THUMB_HEIGHT = 720
 
+# Shorts thumbnails must match the video's own portrait orientation — a
+# landscape thumbnail gets cropped oddly by YouTube's Shorts shelf/player,
+# which is exactly why thumbnails looked wrong on every video this pipeline
+# has produced (every one of them is platform=shorts). Reuses the video's
+# own resolution so text/composition is designed for the frame it'll
+# actually be displayed in.
+THUMB_WIDTH_SHORTS = VIDEO_WIDTH
+THUMB_HEIGHT_SHORTS = VIDEO_HEIGHT
+
 
 @with_retry(max_retries=2, base_delay=2.0)
-def _generate_thumb_local_sd(prompt: str, output_path: Path):
-    """Generate a 16:9 thumbnail via a local AUTOMATIC1111 webui (--api), $0 cost."""
+def _generate_thumb_local_sd(
+    prompt: str, output_path: Path, seed: int = -1,
+    width: int = 1024, height: int = 576,
+):
+    """Generate a thumbnail via a local AUTOMATIC1111 webui (--api), $0 cost."""
     url = f"{_sd_webui_url()}/sdapi/v1/txt2img"
     body = {
         "prompt": prompt,
-        "negative_prompt": "blurry, low quality, distorted, watermark, text, logo",
-        "width": 1024,
-        "height": 576,
+        # Always include safety terms, not just quality terms — the thumbnail
+        # prompt may still end up naming a real person despite the draft
+        # prompt's rule against it, and a thumbnail is the single most public
+        # frame of the whole video (shown before anyone even clicks play).
+        "negative_prompt": (
+            "blurry, low quality, distorted, watermark, text, logo, "
+            "nsfw, nudity, sexualized, suggestive, revealing clothing, "
+            "extra limbs, fused limbs, mutated hands, bad anatomy, disfigured, "
+            "warped geometry, garbled pattern"
+        ),
+        "width": width,
+        "height": height,
         "steps": 20,
         "cfg_scale": 7,
         "sampler_name": "DPM++ 2M",
         "batch_size": 1,
+        "seed": seed,
     }
     r = requests.post(url, json=body, timeout=300)
     if r.status_code != 200:
@@ -42,14 +65,15 @@ def _generate_thumb_local_sd(prompt: str, output_path: Path):
 
 
 @with_retry(max_retries=3, base_delay=2.0)
-def _generate_thumb_image(prompt: str, output_path: Path, api_key: str):
-    """Generate a 16:9 thumbnail via Gemini native image generation."""
+def _generate_thumb_image(prompt: str, output_path: Path, api_key: str, portrait: bool = False):
+    """Generate a thumbnail via Gemini native image generation."""
+    orientation = "9:16 portrait" if portrait else "16:9 landscape"
     url = (
         "https://generativelanguage.googleapis.com/v1beta"
         "/models/gemini-2.0-flash-exp-image-generation:generateContent"
     )
     body = {
-        "contents": [{"parts": [{"text": f"Generate a 16:9 landscape image: {prompt}"}]}],
+        "contents": [{"parts": [{"text": f"Generate a {orientation} image: {prompt}"}]}],
         "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
     }
     r = requests.post(
@@ -79,14 +103,17 @@ def _generate_thumb_image(prompt: str, output_path: Path, api_key: str):
     raise RuntimeError("No image in Gemini response")
 
 
-def _overlay_title(image_path: Path, title: str, output_path: Path):
+def _overlay_title(
+    image_path: Path, title: str, output_path: Path,
+    target_width: int = THUMB_WIDTH, target_height: int = THUMB_HEIGHT,
+    font_size: int = 64,
+):
     """Overlay bold title text with drop shadow on the thumbnail."""
     img = Image.open(image_path).convert("RGB")
-    img = img.resize((THUMB_WIDTH, THUMB_HEIGHT), Image.LANCZOS)
+    img = img.resize((target_width, target_height), Image.LANCZOS)
     draw = ImageDraw.Draw(img)
 
     # Try to find a bold font, fall back to default
-    font_size = 64
     font = None
     for font_name in [
         "/System/Library/Fonts/Helvetica.ttc",
@@ -104,7 +131,7 @@ def _overlay_title(image_path: Path, title: str, output_path: Path):
         font = ImageFont.load_default()
 
     # Word wrap the title
-    max_width = THUMB_WIDTH - 80  # 40px padding each side
+    max_width = target_width - 80  # 40px padding each side
     lines = _wrap_text(draw, title, font, max_width)
     text_block = "\n".join(lines)
 
@@ -112,8 +139,8 @@ def _overlay_title(image_path: Path, title: str, output_path: Path):
     bbox = draw.multiline_textbbox((0, 0), text_block, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
-    x = (THUMB_WIDTH - text_w) // 2
-    y = THUMB_HEIGHT - text_h - 60  # 60px from bottom
+    x = (target_width - text_w) // 2
+    y = target_height - text_h - 60  # 60px from bottom
 
     # Drop shadow
     shadow_offset = 3
@@ -160,6 +187,15 @@ def generate_thumbnail(draft: dict, out_dir: Path) -> Path:
     title = draft.get("youtube_title", draft.get("news", ""))
     job_id = draft.get("job_id", "unknown")
 
+    # Shorts thumbnails must be portrait to match how YouTube actually
+    # displays them — a landscape thumbnail gets awkwardly cropped in the
+    # Shorts shelf/player. Every video this pipeline makes is platform=shorts.
+    is_shorts = draft.get("platform", "shorts") == "shorts"
+    target_width = THUMB_WIDTH_SHORTS if is_shorts else THUMB_WIDTH
+    target_height = THUMB_HEIGHT_SHORTS if is_shorts else THUMB_HEIGHT
+    gen_width, gen_height = (576, 1024) if is_shorts else (1024, 576)
+    font_size = 72 if is_shorts else 64
+
     raw_path = out_dir / f"thumb_raw_{job_id}.png"
     final_path = out_dir / f"thumb_{job_id}.png"
 
@@ -173,13 +209,19 @@ def generate_thumbnail(draft: dict, out_dir: Path) -> Path:
                 "'unregistered callers' error)."
             )
         log("Generating thumbnail via Gemini Imagen...")
-        _generate_thumb_image(prompt, raw_path, api_key)
+        _generate_thumb_image(prompt, raw_path, api_key, portrait=is_shorts)
     else:
         log("Generating thumbnail via local Stable Diffusion...")
-        _generate_thumb_local_sd(prompt, raw_path)
+        import random
+        for attempt in range(3):  # 1 initial try + 2 re-rolls on a failed QA check
+            _generate_thumb_local_sd(prompt, raw_path, seed=random.randint(0, 2**31 - 1), width=gen_width, height=gen_height)
+            passed, reason = _vision_qa_frame(raw_path)
+            if passed:
+                break
+            log(f"Thumbnail attempt {attempt+1}/3 failed vision QA ({reason}) — re-rolling with a new seed...")
 
     log("Adding title overlay...")
-    _overlay_title(raw_path, title, final_path)
+    _overlay_title(raw_path, title, final_path, target_width=target_width, target_height=target_height, font_size=font_size)
 
     log(f"Thumbnail saved: {final_path.name}")
     return final_path

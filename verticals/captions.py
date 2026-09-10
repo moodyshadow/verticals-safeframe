@@ -18,6 +18,53 @@ def _has_ass_filter() -> bool:
         return False
 
 
+def _whisperx_word_timestamps(audio_path: Path, script: str, lang: str = "en") -> list[dict]:
+    """Get word-level timestamps via forced alignment against the KNOWN
+    script text, instead of guessing words from audio like plain Whisper
+    transcription does.
+
+    This is the right tool for the job here specifically because we
+    already wrote the exact words (it's our own TTS voiceover, not
+    unknown speech) — a wav2vec2 forced aligner just needs to find where
+    each of those known words falls in the audio, which gives
+    meaningfully tighter word-boundary precision than Whisper's own
+    word_timestamps (used for both caption highlight timing and the
+    subscribe-button CTA popup — see assemble.py's _find_cta_popup_time).
+    Falls back to None (caller falls back to _whisper_word_timestamps) on
+    any failure — missing package, unsupported language, alignment error.
+    """
+    try:
+        import whisperx
+    except ImportError:
+        log("whisperx not installed — falling back to plain Whisper timestamps")
+        return None
+
+    try:
+        log("Running WhisperX forced alignment against the known script...")
+        device = "cpu"
+        audio = whisperx.load_audio(str(audio_path))
+        duration = len(audio) / 16000  # whisperx loads audio resampled to 16kHz
+        model_a, metadata = whisperx.load_align_model(language_code=lang[:2], device=device)
+        segments = [{"start": 0.0, "end": duration, "text": script}]
+        result = whisperx.align(segments, model_a, metadata, audio, device, return_char_alignments=False)
+
+        words = []
+        for seg in result.get("segments", []):
+            for w in seg.get("words", []):
+                if "start" not in w or "end" not in w:
+                    continue  # words WhisperX couldn't confidently place get no timing
+                words.append({"word": w["word"].strip(), "start": w["start"], "end": w["end"]})
+
+        if not words:
+            log("WhisperX alignment returned no timed words — falling back to plain Whisper.")
+            return None
+        log(f"WhisperX aligned {len(words)} words.")
+        return words
+    except Exception as e:
+        log(f"WhisperX alignment failed ({e}) — falling back to plain Whisper timestamps")
+        return None
+
+
 def _whisper_word_timestamps(audio_path: Path, lang: str = "en") -> list[dict]:
     """Get word-level timestamps from Whisper.
 
@@ -126,12 +173,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end = active_word["end"]
 
             # Build text with override tags: highlight color for active, white for rest
+            active_fs = font_size + 8  # slight pop on the active word, scaled
+            # to the configured font_size — this was hardcoded to a fixed 80
+            # before, so shrinking font_size in a niche profile had no visible
+            # effect on the (usually most prominent) highlighted word.
             parts = []
             for j, w in enumerate(group):
+                word_text = w["word"].upper()
                 if j == active_idx:
-                    parts.append(f"{{\\c{ass_highlight}\\b1\\fs80}}{w['word']}{{\\r}}")
+                    parts.append(f"{{\\c{ass_highlight}\\b1\\fs{active_fs}}}{word_text}{{\\r}}")
                 else:
-                    parts.append(w["word"])
+                    parts.append(word_text)
 
             text = " ".join(parts)
             events.append(
@@ -181,6 +233,7 @@ def generate_captions(
     words_per_group: int = 4,
     font_family: str = "Arial",
     font_size: int = 72,
+    script: str | None = None,
 ) -> dict:
     """Generate captions: ASS (for burn-in) + SRT (for YouTube upload).
 
@@ -191,10 +244,17 @@ def generate_captions(
             captions.font_family field.
         font_size: ASS Style font size. Pulled from the niche profile's
             captions.font_size field.
+        script: The exact voiceover text, if available — enables WhisperX
+            forced alignment (tighter word-boundary timing than plain
+            Whisper transcription) instead of re-guessing the words from
+            audio. Falls back to plain Whisper if omitted or if alignment
+            fails for any reason.
 
     Returns dict with keys: srt_path, ass_path, words (for music ducking).
     """
-    words = _whisper_word_timestamps(audio_path, lang)
+    words = _whisperx_word_timestamps(audio_path, script, lang) if script else None
+    if words is None:
+        words = _whisper_word_timestamps(audio_path, lang)
 
     result = {"words": words}
 

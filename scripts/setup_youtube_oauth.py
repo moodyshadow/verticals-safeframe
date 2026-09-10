@@ -25,6 +25,7 @@ from pathlib import Path
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl",  # needed for captions; narrower than full youtube scope
+    "https://www.googleapis.com/auth/yt-analytics.readonly",  # per-video views/retention for the marketing helper's feedback loop
 ]
 
 SKILL_DIR  = Path.home() / ".verticals"

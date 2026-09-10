@@ -1,11 +1,12 @@
 """CLI entry point — python -m verticals."""
 
 import argparse
+import shutil
 import sys
 import time
 from pathlib import Path
 
-from .config import CONFIG_FILE, DRAFTS_DIR, MEDIA_DIR, run_setup
+from .config import CONFIG_FILE, DRAFTS_DIR, MEDIA_DIR, PUBLISHED_DIR, run_setup
 from .log import log, set_verbose
 from .niche import list_niches
 
@@ -48,6 +49,7 @@ def cmd_draft(args):
         provider=provider,
         url=getattr(args, "topic_url", "") or "",
         summary=getattr(args, "topic_summary", "") or "",
+        word_count=getattr(args, "word_count", None),
     )
     draft["job_id"] = job_id
 
@@ -106,15 +108,32 @@ def cmd_produce(args):
         from .niche import get_visual_source_priority
         default_prompts = [f"Cinematic landscape, variation {i + 1}" for i in range(BROLL_COUNT)]
         use_stock = get_visual_source_priority(profile) != "ai_only"
-        frames, fallback_count = generate_broll(draft.get("broll_prompts", default_prompts), work_dir, use_stock=use_stock)
+        frames, fallback_count, used_asset_paths = generate_broll(draft.get("broll_prompts", default_prompts), work_dir, use_stock=use_stock)
         if fallback_count:
             log(f"WARNING: {fallback_count}/{len(frames)} b-roll frames used the plain gradient fallback (image generation failed)")
-        state.complete_stage("broll", {"frames": [str(f) for f in frames], "fallback_count": fallback_count})
+
+        # Optional per-slot override: draft["broll_multi_image_overrides"] is
+        # {"<frame index>": ["path1", "path2", ...]} — lets a slot show a
+        # crossfading sequence across several manually-picked real photos/
+        # clips instead of generate_broll()'s single best automatic match,
+        # for when more than one genuinely good, distinct real item exists
+        # for the same beat.
+        overrides = draft.get("broll_multi_image_overrides", {})
+        for idx_str, paths in overrides.items():
+            idx = int(idx_str)
+            if 0 <= idx < len(frames):
+                frames[idx] = [Path(p) for p in paths]
+
+        def _serialize_frame(f):
+            return [str(x) for x in f] if isinstance(f, (list, tuple)) else str(f)
+
+        state.complete_stage("broll", {"frames": [_serialize_frame(f) for f in frames], "fallback_count": fallback_count, "used_asset_paths": used_asset_paths})
         draft["broll_fallback_count"] = fallback_count
         draft["broll_frame_count"] = len(frames)
     else:
         log("Skipping b-roll (already done)")
-        frames = [Path(f) for f in state.get_artifact("broll", "frames", [])]
+        raw_frames = state.get_artifact("broll", "frames", [])
+        frames = [[Path(x) for x in f] if isinstance(f, list) else Path(f) for f in raw_frames]
         draft["broll_fallback_count"] = state.get_artifact("broll", "fallback_count", 0)
         draft["broll_frame_count"] = len(frames)
 
@@ -144,39 +163,52 @@ def cmd_produce(args):
             words_per_group=caption_config.get("words_per_group", 4),
             font_family=caption_config.get("font_family", "Arial"),
             font_size=int(caption_config.get("font_size", 72)),
+            script=script,
         )
         state.complete_stage("captions", {
             "srt_path": str(captions_result.get("srt_path", "")),
             "ass_path": str(captions_result.get("ass_path", "")),
+            "words": captions_result.get("words", []),
         })
     else:
         log("Skipping captions (already done)")
         captions_result = {
             "srt_path": state.get_artifact("captions", "srt_path", ""),
             "ass_path": state.get_artifact("captions", "ass_path", ""),
+            "words": state.get_artifact("captions", "words", []),
         }
 
     # Music (niche-aware mood/ducking)
     music_config = get_music_config(profile)
     if force or not state.is_done("music"):
         music_result = select_and_prepare_music(
-            vo_path, work_dir,
+            vo_path, work_dir, niche=niche_name,
             duck_speech=music_config.get("duck_volume_speech", 0.12),
             duck_gap=music_config.get("duck_volume_gap", 0.25),
         )
         state.complete_stage("music", {
             "track_path": str(music_result.get("track_path", "")),
             "duck_filter": music_result.get("duck_filter", ""),
+            "music_credit": music_result.get("music_credit", ""),
         })
     else:
         log("Skipping music (already done)")
         music_result = {
             "track_path": state.get_artifact("music", "track_path", ""),
             "duck_filter": state.get_artifact("music", "duck_filter", ""),
+            "music_credit": state.get_artifact("music", "music_credit", ""),
         }
+    if music_result.get("music_credit"):
+        draft["music_credit"] = music_result["music_credit"]
 
     # Assemble
     if force or not state.is_done("assemble"):
+        # Optional per-slot punch-in: draft["broll_punch_in_frames"] is a
+        # list of 0-based frame indices that should get a slow continuous
+        # zoom instead of holding a static locked-off framing for the whole
+        # slot — added after a real, otherwise-good stock clip (a still
+        # product shot) read as "stale" held at one framing the whole time.
+        punch_in_frames = {int(i) for i in draft.get("broll_punch_in_frames", [])}
         video_path = assemble_video(
             frames=frames,
             voiceover=vo_path,
@@ -186,8 +218,23 @@ def cmd_produce(args):
             ass_path=captions_result.get("ass_path"),
             music_path=music_result.get("track_path"),
             duck_filter=music_result.get("duck_filter"),
+            srt_path=captions_result.get("srt_path"),
+            punch_in_frames=punch_in_frames,
+            words=captions_result.get("words"),
         )
         state.complete_stage("assemble", {"video_path": str(video_path)})
+
+        # Vision-model-first QA pass over the actual finished video — catches
+        # what the per-image generation-time check can't see (a tiled/collage
+        # composition, captions running past where the video cuts to the
+        # outro, a stock clip that's simply the wrong content). Fails open,
+        # never blocks production — findings are surfaced to `review` so
+        # whoever marks a draft reviewed sees the vision model's read first.
+        from .video_qa import qa_assembled_video, summarize_findings
+        log("Running vision-model QA pass over the assembled video...")
+        qa_findings = qa_assembled_video(video_path, work_dir)
+        log("  " + summarize_findings(qa_findings).replace("\n", "\n  "))
+        state.complete_stage("video_qa", {"findings": qa_findings})
     else:
         log("Skipping assembly (already done)")
         video_path = Path(state.get_artifact("assemble", "video_path"))
@@ -222,6 +269,26 @@ def cmd_upload(args):
     srt_path_str = draft.get(f"srt_{lang}")
     srt_path = Path(srt_path_str) if srt_path_str else None
 
+    # Review gate (added 2026-09-02): the automated llava vision-QA check
+    # has repeatedly missed real defects this project has hit (halos from
+    # bad compositing, reused/duplicate b-roll frames, a garbled caption
+    # word) that only turned up once a person actually looked at the
+    # frames. Requiring an explicit human/Claude review before every
+    # upload — not just an automated score — closes that gap. Set via
+    # `python -m verticals review --draft <path>` (or --skip-review to
+    # bypass deliberately, e.g. for an already-reviewed re-upload).
+    if not draft.get("reviewed_by_claude") and not getattr(args, "skip_review", False):
+        print(
+            "\n  BLOCKED: this draft hasn't been marked as reviewed.\n"
+            "  Before uploading, have Claude actually look at the finished "
+            "video's frames (not just the automated vision-QA score) and "
+            "confirm it's clean, then run:\n"
+            f"    python -m verticals review --draft {draft_path}\n"
+            "  Or pass --skip-review to upload anyway (only if you've "
+            "already reviewed it yourself).\n"
+        )
+        sys.exit(1)
+
     if not video_path.exists():
         print(f"  No produced video found for lang={lang}. Run produce first.")
         sys.exit(1)
@@ -253,9 +320,115 @@ def cmd_upload(args):
         log(f"Skipping upload (already done): {url}")
 
     draft[f"youtube_url_{lang}"] = url
+
+    # Advance the 7-day reuse cooldown for this job's b-roll now, at actual
+    # YouTube upload time — not by waiting for the next scheduled
+    # cleanup_published.py run to confirm the video went public. Found a
+    # real bug from that delay: cleanup only runs once daily, so a video
+    # that went public last night wasn't marked "used" until the next
+    # morning's cleanup, leaving an hours-long window where another video
+    # produced overnight could freely re-pick the exact same clip (caught
+    # in practice — a server-room clip from an already-live video got
+    # reused in a same-morning job). A successful upload here always sets
+    # a scheduled publishAt (see upload_to_youtube), so it's a reliable
+    # enough signal of "this is really going out" without needing to wait
+    # for after-the-fact confirmation — same reasoning as why a discarded/
+    # never-uploaded draft still doesn't burn its cooldown (this line never
+    # runs for those). Deliberately NOT done for the automated pipeline's
+    # TikTok-only cross-post (see run_two_niches.py) since that uses
+    # sandbox/SELF_ONLY visibility — private, not real public distribution.
+    try:
+        from .media_library import mark_used
+        used_paths = draft.get("_pipeline_state", {}).get("broll", {}).get("artifacts", {}).get("used_asset_paths", [])
+        for path in used_paths:
+            mark_used(path)
+    except Exception as e:
+        log(f"Marking b-roll assets as used failed (non-fatal): {e}")
+
+    # Archive the exact video/thumbnail that just went live. MEDIA_DIR is
+    # scratch space that later jobs reuse/overwrite, so a cross-post done
+    # any time after this run (not inline, like TikTok/Instagram below) can
+    # silently grab a stale file that no longer matches YouTube — this
+    # happened for real on 2026-09-02. PUBLISHED_DIR is write-once per job
+    # and is the only path cross-posting should trust after the fact.
+    try:
+        PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
+        job_id = draft["job_id"]
+        archived_video = PUBLISHED_DIR / f"{job_id}_{lang}{video_path.suffix}"
+        if not archived_video.exists():
+            shutil.copy2(video_path, archived_video)
+        draft[f"published_video_path_{lang}"] = str(archived_video)
+        if thumb_path and Path(thumb_path).exists():
+            archived_thumb = PUBLISHED_DIR / f"{job_id}_thumb{Path(thumb_path).suffix}"
+            if not archived_thumb.exists():
+                shutil.copy2(thumb_path, archived_thumb)
+            draft["published_thumb_path"] = str(archived_thumb)
+        log(f"Archived published copy: {archived_video.name}")
+    except Exception as e:
+        log(f"Archiving published copy failed (non-fatal): {e}")
+
+    # TikTok cross-post: keeps the TikTok library matched to YouTube instead
+    # of needing a separate manual push every time. Non-fatal — a TikTok
+    # failure shouldn't undo an otherwise-successful YouTube upload.
+    # PUBLIC_TO_EVERYONE as of 2026-09-04 — the app passed TikTok's review,
+    # so the SELF_ONLY sandbox restriction no longer applies (see
+    # tiktok_upload.py and scripts/setup_tiktok_oauth.py; requires the token
+    # in ~/.verticals/tiktok_token.json to have been issued against the
+    # PRODUCTION client_key/secret, not the sandbox one — a sandbox-issued
+    # token is still capped at SELF_ONLY regardless of this parameter).
+    if not draft.get("tiktok_publish_id"):
+        try:
+            from .tiktok_upload import upload_to_tiktok
+            caption = draft.get("tiktok_caption") or draft.get("youtube_title", "")
+            draft["tiktok_publish_id"] = upload_to_tiktok(video_path, caption, privacy_level="PUBLIC_TO_EVERYONE")
+            log(f"Also posted to TikTok: {draft['tiktok_publish_id']}")
+        except Exception as e:
+            log(f"TikTok cross-post failed (non-fatal, YouTube upload still succeeded): {e}")
+
+    # Instagram Reels cross-post deliberately does NOT happen here. Unlike
+    # TikTok (which accepts an immediate SELF_ONLY-visibility upload),
+    # Instagram's API has no scheduling — a call to media_publish goes live
+    # immediately. YouTube uploads here are usually scheduled for a future
+    # publishAt (still private until then, see upload_to_youtube), so
+    # cross-posting at upload time made the Instagram post go out before
+    # the video was actually public on YouTube, regardless of review timing
+    # (caught for real on 2026-09-04). publish_instagram_backlog.py (a local
+    # Task Scheduler job, see setup notes) handles this instead, checking
+    # each candidate's actual YouTube privacyStatus and only posting once
+    # it's really public.
+
     state.save(draft_path)
     print(f"\n  Live: {url}")
     return url
+
+
+def cmd_review(args):
+    """Record that a draft's video was actually looked at (frames, not
+    just the automated vision-QA score) — required before `upload` will
+    proceed. See the comment in cmd_upload for why this exists."""
+    import json
+    from datetime import datetime, timezone
+
+    draft_path = Path(args.draft)
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+
+    # Show the vision model's read first — ask the LLM before the human/
+    # Claude decision, not after. Purely informational: this never blocks
+    # `review` from proceeding, since the per-frame check fails open too.
+    qa_state = draft.get("_pipeline_state", {}).get("video_qa", {})
+    qa_findings = qa_state.get("artifacts", {}).get("findings")
+    if qa_findings:
+        from .video_qa import summarize_findings
+        print(f"\n  {summarize_findings(qa_findings)}\n")
+    else:
+        print("\n  (no automated video QA findings on record for this draft)\n")
+
+    draft["reviewed_by_claude"] = True
+    draft["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    if getattr(args, "note", ""):
+        draft["review_note"] = args.note
+    draft_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  Marked reviewed: {draft_path}")
 
 
 def cmd_run(args):
@@ -396,6 +569,8 @@ def main():
     p_draft.add_argument("--niche", default="general", help=niche_help)
     p_draft.add_argument("--platform", default="shorts", choices=["shorts", "reels", "tiktok", "all"])
     p_draft.add_argument("--provider", default=None, help="LLM: claude, gemini, openai, ollama")
+    p_draft.add_argument("--word-count", dest="word_count", default=None,
+                          help="Override script length, e.g. '80-100' or '200' (default: the niche's own target)")
     p_draft.add_argument("--discover", action="store_true", help="Use topic engine")
     p_draft.add_argument("--auto-pick", action="store_true", help="Let LLM pick the best topic")
     p_draft.add_argument("--dry-run", action="store_true", help="Draft only")
@@ -413,6 +588,14 @@ def main():
     p_upload.add_argument("--draft", required=True)
     p_upload.add_argument("--lang", default="en", choices=["en", "hi", "es", "pt", "de", "fr", "ja", "ko"])
     p_upload.add_argument("--force", action="store_true", help="Re-upload even if done")
+    p_upload.add_argument("--skip-review", action="store_true", help="Bypass the Claude-review gate")
+
+    # review — mark a draft as having actually been looked at (frames
+    # inspected, not just the automated vision-QA score) before it's
+    # allowed through the upload gate.
+    p_review = sub.add_parser("review", help="Mark a draft as reviewed (required before upload)")
+    p_review.add_argument("--draft", required=True)
+    p_review.add_argument("--note", default="", help="Optional note on what was checked")
 
     # run (full pipeline)
     p_run = sub.add_parser("run", help="Full pipeline: draft -> produce -> upload")
@@ -420,6 +603,8 @@ def main():
     p_run.add_argument("--niche", default="general", help=niche_help)
     p_run.add_argument("--platform", default="shorts", choices=["shorts", "reels", "tiktok", "all"])
     p_run.add_argument("--provider", default=None, help="LLM: claude, gemini, openai, ollama")
+    p_run.add_argument("--word-count", dest="word_count", default=None,
+                        help="Override script length, e.g. '80-100' or '200' (default: the niche's own target)")
     p_run.add_argument("--voice", default=None, help="TTS: edge, elevenlabs, 60db, say")
     p_run.add_argument("--lang", default="en", choices=["en", "hi", "es", "pt", "de", "fr", "ja", "ko"])
     p_run.add_argument("--dry-run", action="store_true")
@@ -494,14 +679,29 @@ def main():
         print("  Error: --topic or --discover required")
         sys.exit(1)
 
+    # draft/produce are the stages that touch a GPU (Ollama on GPU 1, the
+    # SD webui on GPU 0 — see joblock.py) — lock each against any other
+    # pipeline invocation using the *same* GPU (a manual redo, the 2am cron
+    # job, run_full_pipeline.py) so two jobs never share one physical card.
+    # "run" does both stages itself (see cmd_run) so each sub-stage locks
+    # only its own GPU rather than blocking the whole run behind one lock —
+    # that would defeat the point of having draft (GPU 1) and another job's
+    # produce (GPU 0) run at the same time. upload/topics are
+    # network/read-only and don't need a lock at all.
     if args.cmd == "draft":
-        cmd_draft(args)
+        from .joblock import job_lock
+        with job_lock("draft"):
+            cmd_draft(args)
     elif args.cmd == "produce":
-        cmd_produce(args)
-    elif args.cmd == "upload":
-        cmd_upload(args)
+        from .joblock import job_lock
+        with job_lock("produce"):
+            cmd_produce(args)
     elif args.cmd == "run":
         cmd_run(args)
+    elif args.cmd == "upload":
+        cmd_upload(args)
+    elif args.cmd == "review":
+        cmd_review(args)
     elif args.cmd == "topics":
         cmd_topics(args)
 

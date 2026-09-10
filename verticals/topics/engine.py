@@ -1,10 +1,19 @@
-"""TopicEngine — orchestrates multi-source discovery + Claude auto-pick."""
+"""TopicEngine — orchestrates multi-source discovery + local auto-pick."""
 
 import concurrent.futures
 
-from ..config import load_config, get_anthropic_client, get_claude_backend, call_claude_cli, NICHE_TO_SUBREDDITS, NICHE_TO_RSS_FEEDS
+from ..config import load_config, NICHE_TO_SUBREDDITS, NICHE_TO_RSS_FEEDS
 from ..log import log
 from .base import TopicCandidate
+
+# A dedicated CPU-only marketing-helper Ollama instance on its own port was
+# planned (to avoid contending with the video pipeline's own GPU-adjacent
+# Ollama) but verticals/marketing_llm.py that would launch it was never
+# actually created — pointing this at the main pipeline Ollama instance
+# instead. auto_pick's prompt is small (~20 ranked candidates, not a full
+# script), so sharing the instance is fine.
+MARKETING_OLLAMA_HOST = "http://127.0.0.1:11434"
+MARKETING_MODEL = "qwen2.5:14b-instruct"
 
 
 class TopicEngine:
@@ -109,28 +118,129 @@ class TopicEngine:
         unique.sort(key=lambda t: t.trending_score, reverse=True)
         return unique[:limit]
 
+    def _recent_titles(self, days: float = 5.0) -> list[str]:
+        """Titles of this niche's own videos *produced* in the last few
+        days (not just uploaded — decision_log.jsonl only logs at upload
+        time, and with a human-review-before-upload gate most produced
+        drafts never reach it at all, so it has zero memory of e.g. three
+        different Pokémon stories produced back to back while none of them
+        had been uploaded yet). Scanning drafts directly is what actually
+        reflects what auto_pick has been choosing, regardless of whether a
+        human has gotten around to publishing it.
+        """
+        import json
+        import time
+        from ..config import DRAFTS_DIR
+
+        cutoff = time.time() - days * 86400
+        titles = []
+        for path in DRAFTS_DIR.glob("*.json"):
+            try:
+                job_id = float(path.stem)
+            except ValueError:
+                continue
+            if job_id < cutoff:
+                continue
+            try:
+                draft = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if draft.get("niche") != self._niche:
+                continue
+            title = draft.get("youtube_title") or draft.get("news", "")
+            if title:
+                titles.append(title)
+        return titles
+
+    def _real_outcome_summary(self, min_videos: int = 3, top_n: int = 8) -> str:
+        """Build the auto_pick prompt's performance-data block from real
+        recorded outcomes (decision_log.jsonl, filled in by
+        track_performance.py against actual YouTube Analytics) instead of a
+        one-time hardcoded snapshot that never updates as more data comes
+        in. Ranked, not interpreted — the model draws its own conclusion
+        about what's working fresh each call, since the pattern is free to
+        change as the channel accumulates more real results.
+        """
+        from ..decision_log import read_all
+
+        entries = [e for e in read_all() if e.get("outcome") and e["outcome"].get("views") is not None]
+        if len(entries) < min_videos:
+            return ""
+        entries.sort(key=lambda e: e["outcome"].get("views", 0), reverse=True)
+        total_views = sum(e["outcome"].get("views", 0) for e in entries)
+
+        lines = [
+            f"REAL OUTCOME DATA from this channel ({len(entries)} videos with recorded "
+            f"outcomes, {total_views} total views) — ranked by actual views, best first:"
+        ]
+        for e in entries[:top_n]:
+            views = e["outcome"].get("views", 0)
+            pct = e["outcome"].get("average_view_percentage", 0) or 0
+            lines.append(f"  - {views} views, {pct:.0f}% avg watched, {e['niche']}: \"{e['title']}\"")
+        lines.append(
+            "Look for what the best performers actually have in common (a "
+            "recognizable name/brand, a type of story, timing, anything) and "
+            "weigh that pattern above a purely trending-score-driven pick."
+        )
+        return "\n".join(lines)
+
     def auto_pick(self, candidates: list[TopicCandidate]) -> str:
-        """Use Claude to pick the best topic for a YouTube Short."""
+        """Use the local marketing-helper model to pick the best topic for a
+        YouTube Short. Runs on the dedicated CPU-only Ollama instance (see
+        MARKETING_OLLAMA_HOST) — picking the best of ~20 pre-ranked candidates
+        is a much easier task than full script generation, well within a
+        14B model's range, and keeps this step at $0 like the rest of the
+        pipeline instead of a paid Claude API call.
+        """
+        import requests
+
         topics_text = "\n".join(
             f"{i+1}. [{t.source}] {t.title} (score: {t.trending_score:.2f})"
             for i, t in enumerate(candidates[:20])
         )
 
-        prompt = f"""Pick the single best topic from this list for a viral YouTube Short (60-90 sec).
-Consider: visual potential, broad appeal, timeliness, controversy/surprise factor.
+        recent = self._recent_titles()
+        recent_block = ""
+        if recent:
+            recent_list = "\n".join(f"- {t}" for t in recent)
+            recent_block = f"""
 
-{topics_text}
+ALREADY COVERED IN THE LAST FEW DAYS on this channel (avoid picking the same
+franchise/subject again unless the new story is genuinely a different,
+must-cover event — being the top-scoring topic today isn't enough on its
+own if it's the same subject as one of these):
+{recent_list}"""
+
+        outcome_block = self._real_outcome_summary()
+        if not outcome_block:
+            outcome_block = (
+                "No real outcome data recorded yet for this channel — weigh "
+                "trending score, visual potential, timeliness, and "
+                "controversy/surprise factor, with a preference for topics "
+                "carrying a mainstream, recognizable name or brand a non-fan "
+                "would still recognize."
+            )
+
+        prompt = f"""Pick the single best topic from this list for a viral YouTube Short (60-90 sec).
+
+{outcome_block}
+
+{topics_text}{recent_block}
 
 Reply with ONLY the topic title text, nothing else."""
 
-        backend = get_claude_backend()
-        if backend == "api":
-            client = get_anthropic_client()
-            msg = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=200,
-                messages=[{"role": "user", "content": prompt}],
+        r = requests.post(
+            f"{MARKETING_OLLAMA_HOST}/api/generate",
+            json={"model": MARKETING_MODEL, "prompt": prompt, "stream": False},
+            # CPU-only inference on this machine runs prompt eval at only
+            # ~2 tok/s (verified directly) — a real ~20-candidate topic list
+            # is 400-600+ prompt tokens, so 120s was cutting it off mid-eval
+            # even when the instance was perfectly healthy, not hung.
+            timeout=420,
+        )
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"Marketing-helper Ollama {r.status_code}: {r.text[:200]} — "
+                f"is it running at {MARKETING_OLLAMA_HOST}?"
             )
-            return msg.content[0].text.strip()
-        else:
-            return call_claude_cli(prompt, max_tokens=200)
+        return r.json().get("response", "").strip()

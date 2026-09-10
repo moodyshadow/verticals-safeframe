@@ -12,9 +12,33 @@ script:
   word_count: "150 to 170"
   sentence_style: "short punchy sentences, occasional longer one for rhythm, never more than two clauses"
 
+  # Mood variants — same pattern as hooks/cta_variants: the LLM picks the one
+  # whose "when" best fits today's specific story, and lets it shape word
+  # choice/energy through the WHOLE script (not just the hook or CTA line).
+  # Added because every tech script defaulted to the same "informed, slightly
+  # opinionated" tone regardless of whether the story actually called for
+  # excitement, alarm, or skepticism — a genuine breakthrough and a privacy
+  # scandal shouldn't read identically.
+  mood_variants:
+    - id: excited
+      description: "genuinely impressed, fast, can't-believe-the-numbers energy"
+      when: "a real technical breakthrough, an impressive product/benchmark, something that actually delivers"
+    - id: skeptical
+      description: "raised-eyebrow, questioning the marketing claim before accepting it"
+      when: "an overhyped announcement, a vague benchmark, a claim that doesn't hold up to scrutiny"
+    - id: alarmed
+      description: "serious, urgent, this-actually-matters energy without being alarmist for its own sake"
+      when: "a privacy breach, security flaw, or decision with real downside for users"
+    - id: analytical
+      description: "calm, measured, walking through the reasoning step by step"
+      when: "a complex topic that needs explaining more than reacting to"
+    - id: sarcastic
+      description: "dry, mocking, deadpan roast of corporate doublespeak or spin"
+      when: "a company's statement is transparent PR spin or contradicts its own actions"
+
   hooks:
     - id: contrarian_take
-      template: "Everyone is celebrating {topic}. Here's why that's actually a problem."
+      template: "On paper, {topic} sounds like a win. In practice? Not so much."
       when: "topic has strong positive consensus, use to create tension"
     - id: breaking_news
       template: "This just happened and nobody is talking about it."
@@ -39,10 +63,29 @@ script:
       when: "deadline driven topic, regulation, deprecation, market shift"
 
   cta_variants:
-    - "Follow for daily tech breakdowns."
-    - "Subscribe if you want AI news that actually matters."
-    - "Drop a comment: do you agree with this take?"
-    - "More context in the pinned comment."
+    # 2026-09-04: was hardcoded to ALWAYS use stay_overclocked verbatim on
+    # every video — real data showed 0 comments across all 11 published
+    # videos despite that CTA explicitly asking for them. A generic "what
+    # topic next" ask that never references what the video was actually
+    # about is easy to scroll past. pick_a_side/prediction ask a specific,
+    # low-effort question tied to today's real subject instead — the bet is
+    # that specificity is what was missing, not the ask itself.
+    # 2026-09-08: pick_a_side/prediction never actually said "subscribe" out
+    # loud — only the stay_overclocked fallback did. The visual subscribe
+    # button still popped up on every video (its timing is keyed off the
+    # word "comment", not "subscribe"), but with no matching audio/caption
+    # ask, most videos were showing a silent button nobody was told to tap.
+    # Added a short subscribe clause to all three so every video reinforces
+    # it verbally, not just the fallback.
+    - id: pick_a_side
+      template: "Team {side_a} or team {side_b}? Comment your pick, and subscribe for more."
+      when: "the story has two clear, nameable opposing camps/positions (two products, two companies, two approaches) that a viewer could quickly take a side on"
+    - id: prediction
+      template: "Comment your prediction: does {subject} actually deliver, or does this fall apart? I'll pin the best one. Subscribe for more."
+      when: "the story is still unresolved/developing (an announcement not yet shipped, a lawsuit not yet decided, a plan not yet executed) so a viewer could plausibly guess the outcome"
+    - id: stay_overclocked
+      template: "Let me know in the comments what topic you'd like us to cover next. Subscribe to stay overclocked on the latest tech news."
+      when: "fallback — use only when neither pick_a_side nor prediction genuinely fits the story (no clear two-sided angle and nothing left unresolved to predict)"
 
   forbidden_phrases:
     - "like and subscribe"
@@ -51,7 +94,6 @@ script:
     - "without further ado"
     - "in this video"
     - "hey everyone"
-    - "let me know in the comments"
 
   structure:
     opening: "Hook in first 3 seconds. No intro, no greeting, straight into the tension."
@@ -94,7 +136,7 @@ voice:
 
   suggested_voices:
     edge_tts:
-      en: "en-US-GuyNeural"
+      en: "en-US-EricNeural"
       hi: "hi-IN-MadhurNeural"
     elevenlabs:
       voice_id: "JBFqnCBsd6RMkjVDRZzb"
@@ -116,8 +158,8 @@ voice:
 captions:
   highlight_color: "#00FF88"
   text_color: "#FFFFFF"
-  font_family: "Arial"
-  font_size: 72
+  font_family: "Arial Black"
+  font_size: 64
   font_weight: "bold"
   position: "lower_third"
   background: "semi_transparent_dark"

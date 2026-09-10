@@ -16,6 +16,15 @@ MEDIA_DIR = SKILL_DIR / "media"
 LOGS_DIR = SKILL_DIR / "logs"
 CONFIG_FILE = SKILL_DIR / "config.json"
 
+# Durable archive of exactly what went live — MEDIA_DIR's files get reused/
+# overwritten by later jobs (it's scratch space), so a cross-post done any
+# time after the fact (not in the same `upload` run) can silently grab a
+# stale file that no longer matches what's actually on YouTube. PUBLISHED_DIR
+# is written once, right after a successful YouTube upload, and never
+# touched again — the permanent source of truth for that job's video/
+# thumbnail. Lives on G: (not the home drive) since finished videos add up.
+PUBLISHED_DIR = Path("G:/AI/YoutubeShortsPipeline/published")
+
 # ─────────────────────────────────────────────────────
 # Video constants
 # ─────────────────────────────────────────────────────
@@ -132,8 +141,44 @@ def get_newsapi_key() -> str:
     return _get_key("NEWSAPI_KEY")
 
 
+def get_kling_key() -> str:
+    return _get_key("KLING_API_KEY")
+
+
 def get_reddit_credentials() -> tuple[str, str]:
     return _get_key("REDDIT_CLIENT_ID"), _get_key("REDDIT_CLIENT_SECRET")
+
+
+def get_tiktok_credentials(sandbox: bool = False) -> tuple[str, str]:
+    # Sandbox is a separate TikTok app registration with its own client
+    # key/secret — needed pre-approval since Production apps can't complete
+    # a live OAuth flow at all until they pass TikTok's review, while
+    # Sandbox apps work immediately for authorized target/test accounts.
+    if sandbox:
+        return _get_key("TIKTOK_SANDBOX_CLIENT_KEY"), _get_key("TIKTOK_SANDBOX_CLIENT_SECRET")
+    return _get_key("TIKTOK_CLIENT_KEY"), _get_key("TIKTOK_CLIENT_SECRET")
+
+
+def get_meta_credentials() -> tuple[str, str]:
+    return _get_key("META_APP_ID"), _get_key("META_APP_SECRET")
+
+
+def get_meta_access_token() -> str:
+    return _get_key("META_ACCESS_TOKEN")
+
+
+def get_r2_config() -> dict:
+    """Cloudflare R2 credentials — used to stage a video at a public URL for
+    Instagram's Content Publishing API, which fetches the video itself
+    rather than accepting an uploaded file (unlike TikTok's API)."""
+    return {
+        "account_id": _get_key("R2_ACCOUNT_ID"),
+        "access_key_id": _get_key("R2_ACCESS_KEY_ID"),
+        "secret_access_key": _get_key("R2_SECRET_ACCESS_KEY"),
+        "bucket": _get_key("R2_BUCKET"),
+        "endpoint": _get_key("R2_ENDPOINT"),
+        "public_url": _get_key("R2_PUBLIC_URL"),
+    }
 
 
 # ─────────────────────────────────────────────────────
@@ -285,17 +330,44 @@ def get_pexels_key() -> str:
     return _get_key("PEXELS_API_KEY")
 
 
+def get_jamendo_key() -> str:
+    return _get_key("JAMENDO_CLIENT_ID")
+
+
+def get_pixabay_key() -> str:
+    return _get_key("PIXABAY_API_KEY")
+
+
 def get_youtube_data_api_key() -> str:
     return _get_key("YOUTUBE_DATA_API_KEY")
 
 
-def get_youtube_token_path() -> Path:
-    token_path = SKILL_DIR / "youtube_token.json"
+def get_youtube_token_path(niche: str | None = None) -> Path:
+    """Each niche publishes to its own YouTube channel/brand (the "Overclocked
+    Gaming News" / "Overclocked Tech News" split decided 2026-09-04) — route
+    to the matching OAuth token instead of always using the original gaming
+    channel's token. Falls back to the original gaming token for any niche
+    without its own channel yet (or when niche is unknown/unspecified),
+    since that's the channel every token/credential predates the split.
+    """
+    filename = "youtube_token_tech.json" if niche == "tech" else "youtube_token.json"
+    token_path = SKILL_DIR / filename
+    if token_path.exists():
+        return token_path
+    setup_script = "scripts/setup_youtube_oauth_tech.py" if niche == "tech" else "scripts/setup_youtube_oauth.py"
+    raise FileNotFoundError(
+        f"YouTube OAuth token not found at {token_path}.\n"
+        f"Run: python3 {setup_script}"
+    )
+
+
+def get_tiktok_token_path() -> Path:
+    token_path = SKILL_DIR / "tiktok_token.json"
     if token_path.exists():
         return token_path
     raise FileNotFoundError(
-        f"YouTube OAuth token not found at {token_path}.\n"
-        "Run: python3 scripts/setup_youtube_oauth.py"
+        f"TikTok OAuth token not found at {token_path}.\n"
+        "Run: python3 scripts/setup_tiktok_oauth.py"
     )
 
 

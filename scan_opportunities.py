@@ -116,6 +116,7 @@ def main() -> Path | None:
                 job_id = str(int(time.time()))
                 draft["job_id"] = job_id
                 draft["topic_score"] = candidate["score"]
+                draft["topic_source"] = candidate["source"]
                 DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
                 draft_path = DRAFTS_DIR / f"{job_id}.json"
                 draft_path.write_text(json.dumps(draft, indent=2), encoding="utf-8")

@@ -8,7 +8,10 @@ class GoogleTrendsSource(TopicSource):
 
     def __init__(self, config: dict = None):
         config = config or {}
-        self.geo = config.get("geo", "IN")
+        # Was hardcoded to India ("IN") regardless of niche/audience despite
+        # this channel's content and voice (en-US-GuyNeural) being US-facing —
+        # default to US, still overridable via config.
+        self.geo = config.get("geo", "US")
 
     @property
     def is_available(self) -> bool:
@@ -21,7 +24,7 @@ class GoogleTrendsSource(TopicSource):
     def fetch_topics(self, limit: int = 10) -> list[TopicCandidate]:
         from pytrends.request import TrendReq
 
-        pytrends = TrendReq(hl="en-US", tz=330)  # IST offset
+        pytrends = TrendReq(hl="en-US", tz=self._geo_to_tz())
         trending = pytrends.trending_searches(pn=self._geo_to_pn())
 
         topics = []
@@ -45,4 +48,9 @@ class GoogleTrendsSource(TopicSource):
             "GB": "united_kingdom",
             "AU": "australia",
         }
-        return geo_map.get(self.geo, "india")
+        return geo_map.get(self.geo, "united_states")
+
+    def _geo_to_tz(self) -> int:
+        """Convert geo code to pytrends tz (minutes offset from UTC)."""
+        tz_map = {"IN": 330, "US": -300, "GB": 0, "AU": 600}
+        return tz_map.get(self.geo, -300)
